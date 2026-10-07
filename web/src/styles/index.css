@@ -1,0 +1,2145 @@
+@import "tailwindcss";
+@import "highlight.js/styles/github-dark-dimmed.css";
+
+/* ============================================================
+   Typefaces — self-hosted variable fonts
+   Geist powers the UI, Geist Mono every code/path/number run.
+   Both ship with the binary (web/public/fonts), so the app keeps its
+   promise of never phoning home: no Google Fonts request, no FOUT on
+   an offline machine. `font-display: swap` keeps first paint instant.
+   Geist was chosen over Inter for its more open apertures and cleaner
+   geometry at small sizes on dark backgrounds; true italics ship as
+   separate variable files (wght-only axis), so each family declares
+   a normal and an italic face.
+   ============================================================ */
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/geist-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/geist-italic-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/geist-mono-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/geist-mono-italic-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ============================================================
+   Global motion defaults
+   Make every Tailwind transition-* utility use Linear's spring curve
+   by default. Much of the app wrote `transition-all var(--spring-sm)`,
+   where the var() token is not a real class and was silently inert —
+   so those transitions fell back to Tailwind's default ease. Setting
+   the theme defaults here fixes the easing everywhere in one place, so
+   hovers and state changes read as consistently smooth.
+   ============================================================ */
+@theme {
+  --default-transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  --default-transition-duration: 160ms;
+
+  /* ----------------------------------------------------------
+     Type scale — semantic, rem-based, four steps.
+     The chat UI previously mixed hard-coded pixel sizes
+     (text-[13px], text-[11.5px], text-[9.5px], …) with rem-based
+     prose, so chrome stayed frozen while content scaled with the
+     fluid root — the two drifted apart on large displays. These
+     tokens give every surface one ladder to stand on:
+
+       text-micro  11px  timestamps, counters, kbd hints
+       text-meta   12px  tool rows, chips, secondary labels
+       text-ui     13px  buttons, titles, list rows
+       text-chat   15px  message content — the one thing you read
+     ---------------------------------------------------------- */
+  --text-micro: 0.6875rem;
+  --text-micro--line-height: 1.45;
+  --text-meta: 0.75rem;
+  --text-meta--line-height: 1.5;
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.5;
+  --text-chat: 0.9375rem;
+  --text-chat--line-height: 1.65;
+}
+
+/* ============================================================
+   Design tokens — Linear-inspired dark-first color system
+   ============================================================ */
+:root {
+  /* Surfaces: warm-tinted dark grays, subtly shifting warmer as they rise */
+  --bg-base:        #09090b;
+  --bg-surface:     #0f0f12;
+  --bg-elevated:    #161619;
+  --bg-overlay:     #1b1b1f;
+  --bg-hover:       #222226;
+
+  /* Borders: intentionally subtle — barely visible until interaction */
+  --border-subtle:  #1e1e23;
+  --border-default: #2a2a30;
+  --border-strong:  #3a3a42;
+
+  /* Text: warm-cool zinc progression */
+  --text-primary:   #ededef;
+  --text-secondary: #9d9da6;
+  --text-tertiary:  #6b6b76;
+  --text-muted:     #4a4a55;
+
+  /* Accent: ogcode brand orange (#FF5E1F) — the single saturated color */
+  --accent:         #ff5e1f;
+  --accent-hover:   #f54500;
+  --accent-soft:    rgba(255, 94, 31, 0.12);
+  --accent-ring:    rgba(255, 94, 31, 0.35);
+  --on-primary:     #ffffff;
+  --glow:           rgba(255, 94, 31, 0.12);
+  --tint:           rgba(255, 94, 31, 0.05);
+
+  --success:        #17c284;
+  --warning:        #f5a623;
+  --danger:         #e5484d;
+  --reasoning:      #a78bfa;
+
+  /* Status palette — Linear-aligned, desaturated for scanability */
+  --status-pending:    #8a8f98;
+  --status-progress:   #f2c94c;
+  --status-completed:  #ff5e1f;
+  --status-failed:     #eb5757;
+  --status-pending-soft:    rgba(138, 143, 152, 0.12);
+  --status-progress-soft:   rgba(242, 201, 76, 0.14);
+  --status-completed-soft:  rgba(255, 94, 31, 0.16);
+  --status-failed-soft:     rgba(235, 87, 87, 0.14);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+
+  /* Shadows: softer, layered — Linear uses depth without heavy shadow */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.25);
+  --shadow-glow: 0 0 16px -4px rgba(255, 94, 31, 0.25);
+
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Reading column for the conversation. One token so the message list,
+     the composer and the empty state can never drift out of alignment. */
+  --chat-col: 46rem;
+
+  /* Spring-based transition presets (CSS approximations of Linear's spring physics) */
+  --spring-sm:  150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --spring-md:  250ms cubic-bezier(0.16, 1, 0.3, 1);
+  --spring-lg:  350ms cubic-bezier(0.16, 1, 0.3, 1);
+  --spring-bounce: 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+/* ============================================================
+   Fluid responsive typography
+   The root font-size scales smoothly with the viewport via clamp(),
+   so every rem-based size in the app — all Tailwind text-* utilities,
+   the chat prose, and any rem spacing — adapts to the screen with no
+   hard breakpoints. It is deliberately anchored at 16px for the whole
+   laptop/desktop range: the previous scale reached ~17.6px at 1440px,
+   which inflated every rem in the app by 10% and read as the soft,
+   oversized "marketing" look rather than the dense workbench the app
+   is meant to be. It still eases down on narrow phones and up a little
+   on 4K, where the extra distance earns it. text-size-adjust stops
+   mobile browsers from re-inflating text on rotate/zoom.
+
+   Reference for the scale (viewport → root px):
+     ≤900px → 14.5   1280px → ~15.5   1440px → 16   ≥1770px → 17
+   ============================================================ */
+html {
+  font-size: clamp(14.5px, 0.72rem + 0.31vw, 17px);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* Body base as rem so it scales with the fluid root (≈13px at the 16px
+     reference, growing gently on larger screens). Tight line-height and
+     slight negative tracking preserved from the Linear-inspired design. */
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+}
+
+/* Default transition for interactive elements — Linear's spring timing */
+button, a, input, textarea, select,
+[role="button"], [role="tab"] {
+  transition: background-color var(--spring-sm),
+              color var(--spring-sm),
+              border-color var(--spring-sm),
+              box-shadow var(--spring-sm),
+              opacity var(--spring-sm),
+              transform var(--spring-sm);
+}
+
+/* Tactile press feedback — controls dip slightly when pressed, giving a
+   physical, responsive feel app-wide. The transform transition above animates
+   both the press and the spring-back release. Kept subtle so it reads as
+   "responsive," not "bouncy." */
+button:not(:disabled):active,
+[role="button"]:not([aria-disabled="true"]):active {
+  transform: scale(0.97);
+}
+@media (prefers-reduced-motion: reduce) {
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active {
+    transform: none;
+  }
+}
+
+::selection {
+  /* accent-soft (12% alpha) was nearly invisible; a ~40% accent tint keeps the
+     highlight clearly visible while text-primary stays high-contrast in both themes. */
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   Scrollbars — Linear-inspired: ultra-thin, barely visible
+   ============================================================ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: #2a2a30;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a42 !important;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a30 transparent;
+}
+
+/* ============================================================
+   Focus rings — Linear-style: soft glow, not hard outlines
+   ============================================================ */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-ring);
+  border-radius: 4px;
+}
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-base), 0 0 0 4px var(--accent-ring), var(--shadow-glow);
+}
+
+textarea:focus,
+textarea:focus-visible,
+input:focus,
+input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* ============================================================
+   Animations — Linear-inspired spring physics
+   All transitions use cubic-bezier(0.16, 1, 0.3, 1) which
+   approximates a spring with slight overshoot, giving that
+   characteristic Linear "snap into place" feel.
+   ============================================================ */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeInSlideRight {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes fadeInSlideLeft {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes fadeInSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes slideInFromRight {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInFromLeft {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes bounceDot {
+  0%, 80%, 100% { transform: scale(0.4); opacity: 0.4; }
+  40%           { transform: scale(1);   opacity: 1; }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 94, 31, 0.4); }
+  70%  { box-shadow: 0 0 0 6px rgba(255, 94, 31, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 94, 31, 0); }
+}
+@keyframes popIn {
+  0%   { opacity: 0; transform: scale(0.9); }
+  70%  { transform: scale(1.02); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* Model-switch confirmation popover: pops in, holds, then gently fades out. */
+@keyframes switchPopup {
+  0%   { opacity: 0; transform: scale(0.92) translateY(-6px); }
+  12%  { opacity: 1; transform: scale(1.02) translateY(0); }
+  20%  { transform: scale(1) translateY(0); }
+  78%  { opacity: 1; transform: scale(1) translateY(0); }
+  100% { opacity: 0; transform: scale(0.98) translateY(-4px); }
+}
+
+/* ------------------------------------------------------------
+   Conversation motion
+   Turns rise into place instead of sliding in from the sides. The
+   old left/right slide drew the eye horizontally on every token
+   flush during streaming, which made a long answer feel jittery;
+   a short vertical rise reads as "settling" and stays calm while
+   text streams in underneath it.
+   ------------------------------------------------------------ */
+@keyframes msgRise {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+/* The streaming caret: a soft block that trails the last token so it is
+   obvious the answer is still being written, not finished and short. */
+@keyframes caretBlink {
+  0%, 45%  { opacity: 1; }
+  55%, 100% { opacity: 0.15; }
+}
+/* Sweeping highlight for the "working" label — a moving band of light
+   across muted text. Communicates ongoing work without a spinner. */
+@keyframes textSweep {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+/* Tool disclosure — height animates via grid-template-rows 0fr → 1fr,
+   which (unlike max-height) needs no magic number and lands exactly on
+   the content's real height. */
+@keyframes toolReveal {
+  from { grid-template-rows: 0fr; opacity: 0; }
+  to   { grid-template-rows: 1fr; opacity: 1; }
+}
+
+/* Spring-based animation classes using Linear's timing curves */
+.animate-fade-in       { animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-fade-in-right { animation: slideInFromRight 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-fade-in-left  { animation: slideInFromLeft 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-fade-in-up    { animation: fadeInSlideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-scale-in      { animation: scaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-pop-in        { animation: popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+.animate-slide-down    { animation: slideDown 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-spin          { animation: spin 0.9s linear infinite; }
+.animate-pulse-ring    { animation: pulse-ring 2s ease-out infinite; }
+.animate-switch-popup { animation: switchPopup 1.8s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+/* Linear-style subtle message/list entrance */
+.anim-enter { animation: fadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* ------------------------------------------------------------
+   Conversation motion — utility classes
+   ------------------------------------------------------------ */
+/* `forwards`, never `both`: with `backwards` fill the row would sit at the
+   keyframe's starting opacity (0) until the animation actually begins, so a
+   throttled or suspended renderer — a background tab, a hidden pane — can
+   leave a message invisible. Starting from the settled state and animating
+   forward degrades to "no animation" instead of "no content". */
+.animate-msg-in { animation: msgRise 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+/* Caret riding the tail of the message currently being streamed.
+   Attached as ::after on the last block of the last rendered part, so it
+   follows the text through every re-render instead of being a separate
+   element that markdown re-parsing would knock onto its own line. */
+.msg-streaming > .prose-chat:last-child > :last-child:not(.code-block)::after {
+  content: '';
+  display: inline-block;
+  width: 0.42em;
+  height: 1em;
+  margin-left: 0.12em;
+  border-radius: 1px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: caretBlink 1.05s steps(1, end) infinite;
+}
+
+/* Muted label with a highlight sweeping through it — used while the
+   agent is generating or a tool is running. */
+.sweep-text {
+  background: linear-gradient(
+    100deg,
+    var(--text-tertiary) 0%,
+    var(--text-tertiary) 38%,
+    var(--text-primary) 50%,
+    var(--text-tertiary) 62%,
+    var(--text-tertiary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: textSweep 2.2s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sweep-text {
+    background: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    color: var(--text-secondary);
+  }
+  .msg-streaming > .prose-chat:last-child > :last-child:not(.code-block)::after { animation: none; }
+}
+
+/* Disclosure wrapper: the child must be the only element and carry
+   `min-height: 0` so the collapsed row can actually reach zero. */
+.reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  /* forwards, not both — see .animate-msg-in: the open row must never depend
+     on an animation having run, or a throttled renderer hides the output. */
+  animation: toolReveal 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.reveal > * { min-height: 0; overflow: hidden; }
+
+/* Page-level entrance — a top-level route surface cross-fades in as it mounts,
+   so navigating between the landing screen, a session, notes, and settings feels
+   like a soft fade rather than a hard swap. Deliberately opacity-only: these
+   containers hold backdrop-blur headers, and a transform on them would create a
+   containing block that glitches the blur. */
+@keyframes pageEnter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.page-enter { animation: pageEnter 0.26s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* Modal backdrop fade — pairs with a panel's popIn/scaleIn so the dimmed
+   overlay eases in rather than snapping to full opacity. */
+@keyframes backdropFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.modal-backdrop { animation: backdropFade 0.18s ease-out both; }
+
+/* Staggered list entrance — children animate in sequence with 30-50ms delay.
+   Apply to parent, nth-child delays go on the children. */
+.anim-stagger > * {
+  animation: fadeInSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.anim-stagger > *:nth-child(1)  { animation-delay: 0ms; }
+.anim-stagger > *:nth-child(2)  { animation-delay: 30ms; }
+.anim-stagger > *:nth-child(3)  { animation-delay: 60ms; }
+.anim-stagger > *:nth-child(4)  { animation-delay: 90ms; }
+.anim-stagger > *:nth-child(5)  { animation-delay: 120ms; }
+.anim-stagger > *:nth-child(6)  { animation-delay: 150ms; }
+.anim-stagger > *:nth-child(7)  { animation-delay: 180ms; }
+.anim-stagger > *:nth-child(8)  { animation-delay: 200ms; }
+.anim-stagger > *:nth-child(9)  { animation-delay: 220ms; }
+.anim-stagger > *:nth-child(10) { animation-delay: 240ms; }
+.anim-stagger > *:nth-child(n+11) { animation-delay: 260ms; }
+
+/* Respect users who prefer reduced motion — neutralize entrance/transition motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
+  background-size: 800px 100%;
+  animation: shimmer 2s linear infinite;
+}
+
+/* ============================================================
+   Thinking dots
+   ============================================================ */
+.thinking-dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 2px 0;
+}
+.thinking-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  animation: bounceDot 1.4s infinite ease-in-out both;
+}
+.thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
+.thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0s; }
+
+/* ============================================================
+   Textarea auto-resize
+   ============================================================ */
+textarea.auto-resize {
+  field-sizing: content;
+  min-height: 24px;
+  max-height: 240px;
+}
+
+/* ============================================================
+   Prose / markdown styling — Linear's tight, scannable type
+   ============================================================ */
+.prose-chat {
+  /* The answer is the one thing in this app you actually *read*, so it
+     gets a genuine reading size and leading while the surrounding chrome
+     stays at 12–13px. That contrast is what makes a dense UI legible
+     rather than merely small. */
+  line-height: 1.65;
+  font-size: var(--text-chat);
+  color: var(--text-primary);
+  letter-spacing: -0.003em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.prose-chat > :first-child { margin-top: 0; }
+.prose-chat > :last-child  { margin-bottom: 0; }
+/* A code block is wrapped in .code-block (see markdown-content.tsx), so the
+   edge rules above land on the wrapper while the margin lives on the <pre>. */
+.prose-chat > .code-block:first-child > pre { margin-top: 0; }
+.prose-chat > .code-block:last-child  > pre { margin-bottom: 0; }
+
+.prose-chat p {
+  margin: 0 0 0.85em;
+}
+
+.prose-chat code {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-subtle);
+  padding: 0.08em 0.4em;
+  border-radius: 5px;
+  font-size: 0.86em;
+  font-family: var(--font-mono);
+  color: #e4e4e7;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: inline;
+}
+
+.prose-chat pre {
+  background: #0d0d10;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0.9em 0;
+  font-size: var(--text-meta);
+  line-height: 1.6;
+  box-shadow: var(--shadow-sm);
+  max-width: 100%;
+}
+.prose-chat pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: #e4e4e7;
+  white-space: pre;
+}
+
+/* ------------------------------------------------------------
+   Fenced code blocks — language chip + copy button
+   The controls float over the block's top-right corner and only
+   appear on hover (or keyboard focus), so a page of code reads as
+   code rather than as a stack of toolbars.
+   ------------------------------------------------------------ */
+.code-block {
+  position: relative;
+}
+.code-block-bar {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  opacity: 0;
+  transition: opacity 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.code-block:hover .code-block-bar,
+.code-block:focus-within .code-block-bar {
+  opacity: 1;
+}
+.code-block-lang {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  text-transform: lowercase;
+  user-select: none;
+}
+.code-block-copy {
+  display: inline-flex;
+  align-items: center;
+  height: 1.375rem;
+  padding-inline: 0.5rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.code-block-copy:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.code-block-copy.is-copied {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+}
+
+/* highlight.js token colors are fine; override its block-level overrides so
+   our prose-chat pre container controls bg/padding/radius instead */
+.prose-chat pre code.hljs {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* File viewer: the pane owns background and padding, not highlight.js. */
+.code-view code.hljs {
+  background: none;
+  padding: 0;
+  white-space: pre;
+}
+
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0.5em 0 0.75em;
+  padding-left: 1.4em;
+}
+.prose-chat ul { list-style: disc; }
+.prose-chat ol { list-style: decimal; }
+.prose-chat li {
+  margin-bottom: 0.25em;
+}
+.prose-chat li::marker {
+  color: var(--text-muted);
+}
+
+.prose-chat blockquote {
+  border-left: 3px solid var(--border-strong);
+  padding: 0.1em 0 0.1em 1em;
+  margin: 0.75em 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3,
+.prose-chat h4 {
+  font-weight: 620;
+  /* Generous space above a heading, tight below it, so a heading binds
+     to the paragraph it introduces instead of floating between both. */
+  margin: 1.5em 0 0.45em;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+.prose-chat h1 { font-size: 1.3em; }
+.prose-chat h2 { font-size: 1.14em; }
+.prose-chat h3 { font-size: 1.02em; }
+.prose-chat h4 { font-size: 0.94em; color: var(--text-secondary); }
+
+.prose-chat hr {
+  border: 0;
+  border-top: 1px solid var(--border-default);
+  margin: 1.25em 0;
+}
+
+.prose-chat a {
+  color: #ffb38a;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  transition: color var(--spring-sm);
+}
+.prose-chat a:hover {
+  color: #ffc9a8;
+}
+
+.prose-chat table {
+  border-collapse: collapse;
+  margin: 0.75em 0;
+  font-size: 0.875em;
+}
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid var(--border-default);
+  padding: 0.4em 0.7em;
+  text-align: left;
+}
+.prose-chat th {
+  background: var(--bg-overlay);
+  font-weight: 600;
+}
+
+/* ============================================================
+   prose-chat — compact/preview variant
+   Collapses all block children to inline so -webkit-line-clamp
+   can clip rendered markdown at N visual lines.
+   ============================================================ */
+.prose-chat.prose-chat-preview {
+  font-size: 0.6875rem; /* 11px */
+  line-height: 1.4;
+}
+.prose-chat.prose-chat-preview p,
+.prose-chat.prose-chat-preview h1,
+.prose-chat.prose-chat-preview h2,
+.prose-chat.prose-chat-preview h3,
+.prose-chat.prose-chat-preview h4,
+.prose-chat.prose-chat-preview ul,
+.prose-chat.prose-chat-preview ol,
+.prose-chat.prose-chat-preview li,
+.prose-chat.prose-chat-preview pre,
+.prose-chat.prose-chat-preview blockquote,
+.prose-chat.prose-chat-preview hr {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  border: none;
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+  white-space: normal;
+}
+.prose-chat.prose-chat-preview li::marker { content: none; }
+.prose-chat.prose-chat-preview code {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: inherit;
+}
+
+/* ============================================================
+   RoughJS hand-drawn diagrams
+   ============================================================ */
+.rough-diagram {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin: 0.75em 0;
+  overflow: hidden;
+}
+.rough-diagram svg {
+  display: block;
+}
+
+/* ============================================================
+   Diagram zoom
+   Every diagram the agent draws gets a magnifier pinned to its
+   top-right corner; it stays visible (unlike the code-block bar)
+   because a diagram that cannot be zoomed is worth knowing about
+   up front, not only on hover. The zoomed view is a wide dialog.
+   ============================================================ */
+.diagram-frame {
+  position: relative;
+}
+.diagram-zoom {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.625rem;
+  height: 1.625rem;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 150ms cubic-bezier(0.16, 1, 0.3, 1), color 150ms, background 150ms, border-color 150ms;
+}
+.diagram-zoom:hover,
+.diagram-zoom:focus-visible {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  outline: none;
+}
+/* The chat column is often narrow; give a plotly chart a floor so it does not
+   collapse, and let it scroll sideways rather than squash. */
+.prose-chat .plotly-chart {
+  min-width: 260px;
+  overflow-x: auto;
+}
+/* Zoomed diagram body: roomy, centred, and scrollable when the diagram is
+   wider or taller than the dialog. */
+.diagram-zoom-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 1.25rem;
+  background: var(--bg-base);
+  display: flex;
+  justify-content: center;
+}
+.diagram-zoom-host {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.diagram-zoom-host .mermaid,
+.diagram-zoom-host svg {
+  max-width: 100%;
+  height: auto;
+}
+.diagram-zoom-host .latex-page-img {
+  width: 100%;
+  max-width: 100%;
+  margin-bottom: 12px;
+}
+.diagram-zoom-empty {
+  color: var(--text-tertiary);
+  font-size: var(--text-meta);
+  text-align: center;
+  padding: 2rem 0;
+}
+
+/* ============================================================
+   LaTeX document rendering (inline pages)
+   ============================================================ */
+.latex-render-container {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  margin: 0.75em 0;
+  overflow: hidden;
+}
+.latex-render-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-overlay);
+  border-bottom: 1px solid var(--border-default);
+}
+.latex-render-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  min-width: 0;
+  flex: 1;
+}
+.latex-render-type {
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.latex-render-title {
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.latex-render-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+.latex-src-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-default);
+  cursor: pointer;
+  transition: all var(--spring-sm);
+}
+.latex-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--spring-sm);
+  white-space: nowrap;
+}
+.latex-zoom-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.latex-src-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+.latex-src-toggle.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(255, 94, 31, 0.3);
+}
+.latex-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid rgba(255, 94, 31, 0.25);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--spring-sm);
+  white-space: nowrap;
+}
+.latex-download-btn:hover:not(:disabled) {
+  background: rgba(255, 94, 31, 0.2);
+  border-color: rgba(255, 94, 31, 0.4);
+}
+.latex-download-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Loading spinner */
+.latex-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 12px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+.latex-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-default);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: latex-spin 0.8s linear infinite;
+}
+@keyframes latex-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Page images — rendered PDF pages displayed inline */
+.latex-pages {
+  background: #2a2a2e;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+}
+.latex-page {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+.latex-page-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 2px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* Source code preview (toggleable) */
+.latex-source-preview {
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: var(--text-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  background: #0d0d10;
+  border-top: 1px solid var(--border-default);
+}
+
+/* Status messages */
+.latex-render-status {
+  padding: 6px 12px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border-top: 1px solid var(--border-subtle);
+}
+.latex-success {
+  color: var(--success);
+}
+.latex-error {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 150px;
+  overflow-y: auto;
+}
+/* Backward compat — old class names may still be in cached DOM */
+.latex-spin {
+  animation: latex-spin 1s linear infinite;
+}
+
+/* ============================================================
+   Utility overrides
+   ============================================================ */
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { scrollbar-width: none; }
+
+/* ------------------------------------------------------------
+   Transcript rhythm
+   A single space-y value spaces every message the same, which makes a
+   run of six tool calls look as significant as a change of speaker.
+   The rows key their gap off the role of each message instead: a wide
+   break before a new user prompt, a medium one under it, and tight
+   packing inside the agent's own run of tool calls and replies. The
+   transcript is virtualized, so the row above may not be mounted and a
+   sibling selector cannot see it — message-list.tsx applies those gaps
+   inline. This rule spaces what follows the rows (the working indicator,
+   the loop-error notice); the pads are exempt, because their height IS
+   the spacing of the rows they stand in for.
+   ------------------------------------------------------------ */
+.chat-flow > * + *:not(.chat-pad) { margin-top: 0.625rem; }
+
+/* A stand-in for the message rows outside the mounted window, so the total
+   height — and therefore the scrollbar and the reading position — stays the
+   transcript's, not the window's. */
+.chat-pad {
+  width: 100%;
+}
+
+/* A row mounted because the reader scrolled to it is history, not news: it
+   appears as it is rather than rising in. Only rows message-list.tsx marks
+   fresh — the opening render and messages that arrive while the session is
+   open — keep the entrance animation. */
+.chat-flow > [data-vrow]:not([data-fresh]) .animate-msg-in { animation: none; }
+
+/* The transcript's scrollport.
+
+   `overflow-anchor: none` is the load-bearing line. Chrome anchors the scroll
+   position to a node it picks inside the viewport and silently corrects
+   scrollTop whenever content above that node changes height. The streaming
+   message re-renders its whole markdown subtree on every chunk, so Chrome lost
+   and re-picked its anchor several times a second and corrected against our
+   follow-the-bottom scroll — the view jumped up, snapped back, and jittered for
+   the length of a long answer. Position is held explicitly in lib/chat-scroll.ts
+   instead, which can tell a real gesture from a relayout.
+
+   `overscroll-behavior: contain` keeps a flick at either end from chaining out
+   to the page behind the transcript. */
+.chat-scroll {
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+}
+
+/* The conversation's reading column — shared by the transcript, the
+   composer and the empty state so all three share one centre line. */
+.chat-col {
+  width: 100%;
+  max-width: var(--chat-col);
+  margin-inline: auto;
+}
+
+/* Ghost icon button — the quiet, square hover action used under
+   messages and in the composer toolbar. */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.75rem;
+  min-width: 1.75rem;
+  padding-inline: 0.375rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.icon-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.icon-btn:disabled:hover {
+  color: var(--text-tertiary);
+  background: transparent;
+}
+.icon-btn.is-open {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* Reasoning ("Thought") disclosure — tinted with the --reasoning token so a
+   custom accent never desyncs it. Written in CSS rather than as Tailwind
+   opacity modifiers because those cannot resolve a var() colour at build time. */
+.reasoning-toggle {
+  color: color-mix(in srgb, var(--reasoning) 82%, transparent);
+}
+.reasoning-toggle:hover {
+  color: var(--reasoning);
+  background: color-mix(in srgb, var(--reasoning) 9%, transparent);
+}
+.reasoning-count {
+  color: color-mix(in srgb, var(--reasoning) 55%, transparent);
+}
+.reasoning-body {
+  border-left: 2px solid color-mix(in srgb, var(--reasoning) 22%, transparent);
+}
+
+/* ------------------------------------------------------------
+   Composer
+   The box lifts on focus rather than changing colour: a ring in the
+   accent plus a slightly deeper shadow, so the eye lands on it without
+   the border turning into a hard, saturated outline.
+   ------------------------------------------------------------ */
+.composer {
+  border-color: var(--border-default);
+  box-shadow: var(--shadow-md);
+}
+.composer.is-focused {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-default));
+  box-shadow: var(--shadow-lg), 0 0 0 3px var(--accent-soft);
+}
+.composer.is-dragging {
+  border-color: transparent;
+}
+
+/* Send button — square-ish pill that fills with the accent the moment the
+   message is actually sendable, so "ready to send" is visible at a glance. */
+.send-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2rem;
+  width: 2rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  transform: scale(0.94);
+  transition: background-color var(--spring-sm), color var(--spring-sm),
+              transform var(--spring-sm), box-shadow var(--spring-sm);
+}
+.send-btn.is-ready {
+  background: var(--accent);
+  color: var(--on-primary);
+  cursor: pointer;
+  transform: scale(1);
+  box-shadow: var(--shadow-sm);
+}
+.send-btn.is-ready:hover {
+  background: var(--accent-hover);
+  box-shadow: var(--shadow-glow);
+}
+/* Stop state: while the agent is running the same button is the stop control
+   (the pause glyph), so it has to read as clickable even though nothing is
+   queued to send. Warn on hover rather than at rest. */
+.send-btn.is-stop {
+  cursor: pointer;
+}
+.send-btn.is-stop:hover {
+  background: color-mix(in srgb, var(--danger) 16%, var(--bg-elevated));
+  color: var(--danger);
+}
+
+/* Update toast — the bottom-right release notification. A flat elevated
+   surface using the layered depth shadow (no gradient); it slides up on entry
+   and its release-notes scroll box gets a thin scoped scrollbar. */
+.update-toast {
+  box-shadow: var(--shadow-lg);
+  animation: fadeInSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.update-notes::-webkit-scrollbar {
+  width: 6px;
+}
+.update-notes::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--border-strong);
+}
+.update-notes::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Keycap used in the composer hint row. */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  padding: 0 0.25rem;
+  border: 1px solid var(--border-default);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  line-height: 1.15rem;
+  color: var(--text-tertiary);
+}
+
+/* Grid background pattern (subtle) — Linear-inspired dot grid */
+.bg-grid {
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(255, 94, 31, 0.04) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+/* ============================================================
+   Settings editor
+   Search filters by hiding individual setting rows rather than
+   unmounting them, so a section can end up with a heading and no
+   body. :has() lets the heading disappear with its contents, with
+   no bookkeeping in every page about which of its rows survived.
+   ============================================================ */
+[data-section]:not(:has([data-setting]:not([hidden]))) {
+  display: none;
+}
+
+/* ============================================================
+   Mobile pass
+   Two ideas run through this whole section:
+   1. Viewport reality — dvh instead of 100vh so iOS Safari's URL bar
+      stops hiding the composer; safe-area insets so content clears
+      the notch and home indicator; a --kb-inset variable fed by the
+      visualViewport listener (lib/keyboard.ts) so the on-screen
+      keyboard never covers the input.
+   2. Touch reality — @media (hover: none) un-hides every hover-only
+      affordance; pointer sizes meet the 44px floor where it matters.
+   The app stays desktop-first: everything here is additive, and the
+   layouts only change below lg (1024px).
+   ============================================================ */
+
+/* The app shell and every page column use h-dvh (Tailwind) so the layout
+   tracks the visual viewport. For anything that hardcodes a vh height,
+   this swaps it for dvh where supported. */
+@supports (height: 100dvh) {
+  html, body, #root {
+    height: 100dvh;
+  }
+}
+
+/* Tabular numbers and 16px inputs: iOS Safari zooms any form field whose
+   font-size is under 16px when it takes focus. The composer textarea reads
+   at text-chat (15px ≈ 0.9375rem); bumping it to 1rem on coarse pointers
+   kills the zoom-jump without changing the desktop design. */
+@media (pointer: coarse) {
+  textarea, input, select {
+    font-size: max(1rem, 1em);
+  }
+}
+
+/* Viewport height correction for the overflow-x-auto sheets (kanban board,
+   markdown previews): -webkit-overflow-scrolling momentum is default now. */
+
+/* Safe-area padding. Applied to the app's fixed chrome: the top headers and
+   the bottom composer/footers. On desktop the env() values are all 0, so
+   these are no-ops — one rule set, every platform. */
+.px-safe {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+/* Tap highlight: iOS flashes a translucent gray box on every tap, which
+   reads as broken over the dark theme's carefully tuned hover states. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The drawer ------------------------------------------------------------
+   Below lg the 260px sidebars become overlay drawers: fixed to the left
+   edge, 82% of the viewport (max 320px), sliding in over a dimmed,
+   blurred backdrop. On lg+ the shell renders its children inline and the
+   drawer CSS is inert. The slide animation pairs with the app's spring
+   easing rather than a linear wipe. */
+.sidebar-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 60;
+  width: min(82vw, 320px);
+  transform: translateX(-102%);
+  transition: transform var(--spring-md);
+  box-shadow: none;
+  will-change: transform;
+}
+.sidebar-drawer.is-open {
+  transform: translateX(0);
+  box-shadow: 0 0 60px rgba(0, 0, 0, 0.55);
+}
+.sidebar-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 59;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--spring-md);
+}
+/* The scrim is a SIBLING of .sidebar-drawer (mounted under the same root,
+   not a descendant — see sidebar-shell.tsx) and mounts only while open via
+   <Show>, so plain .is-active styling is enough. No .sidebar-drawer.is-open
+   scoping, and none of the transform-containing-block traps that came with
+   nesting it inside the transformed drawer. */
+.sidebar-drawer-scrim.is-active {
+  pointer-events: auto;
+}
+
+/* The drawer's inner column keeps the sidebar's own width so the app
+   shell markup is unchanged; the drawer just repositions it. */
+.sidebar-drawer-viewport {
+  height: 100%;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  display: flex;
+}
+
+/* Drawer geometry, desktop-neutral: the same min(82vw, 320px) cap makes the
+   drawer narrow enough that the page behind stays visible on tablets in
+   landscape, where users swipe rather than tap the scrim. */
+
+/* A drawer must never scroll the page behind it while open — iOS rubber-
+   bands the whole document otherwise. Applied to <body> by the shell. */
+body.drawer-open {
+  overflow: hidden;
+}
+
+/* Touch sizing ----------------------------------------------------------
+   On touch, un-hide every hover-gated action. These mirror the specific
+   class pairs used by the app (opacity-0 group-hover:*). Using CSS rather
+   than a Tailwind `pointer-coarse:opacity-100` on each element keeps the
+   rule in one place; new hover-only controls are picked up for free. */
+@media (hover: none) {
+  /* Generic hover-gated rows: sidebar rename/delete, task start, notes delete,
+     file-tree unindexed dot, code-block bar. */
+  [class*="group-hover:opacity-0"],
+  [class*="group-hover:opacity-100"],
+  [class*="group-hover/row:opacity-0"],
+  [class*="group-hover/row:opacity-100"],
+  [class*="group-hover/row:hidden"],
+  [class*="hidden group-hover/row:flex"] {
+    opacity: 1 !important;
+  }
+  [class*="group-hover/row:hidden"] {
+    display: none !important;
+  }
+  [class*="hidden group-hover/row:flex"] {
+    display: flex !important;
+  }
+  .code-block-bar {
+    opacity: 1;
+  }
+  /* The 44px touch floor: bump hit areas of ghost icon buttons and key
+     composer controls without changing their visual size — padding eats
+     the space, the glyph stays centered. */
+  .icon-btn {
+    height: 2.25rem;
+    min-width: 2.25rem;
+  }
+  .send-btn {
+    height: 2.5rem;
+    width: 2.5rem;
+  }
+  /* Sidebar row actions (rename/delete) and plan-row delete are 20-24px
+     squares; give them a real touch target. The rows themselves also grow
+     from 28px to ~36px so a thumb can hit them precisely. */
+  [class*="group/row"] button {
+    min-width: 1.75rem;
+    min-height: 1.75rem;
+  }
+  /* The list rows: 28px is a mouse target, not a thumb target. */
+  [class*="group/row"].h-7 {
+    height: 2.25rem;
+  }
+}
+
+/* Composer ---------------------------------------------------------------
+   The bottom sheet of the chat: lifts above the keyboard on iOS via
+   --kb-inset (visualViewport listener) and above the home indicator via
+   env(safe-area-inset-bottom). --kb-inset is 0 on desktop, so the padding
+   collapses to just the safe area. */
+.composer-safe {
+  padding-bottom: max(var(--kb-inset, 0px), env(safe-area-inset-bottom, 0px));
+}
+
+/* Keyboard hints (↵ send · ⇧↵ newline) are desktop-only affordances —
+   touch keyboards have their own return key. Free the vertical space. */
+@media (hover: none), (max-width: 767px) {
+  .composer-hints {
+    display: none;
+  }
+}
+
+/* Model dropdown on phones: the fixed 384px popover cannot fit a 390px
+   viewport. On narrow screens it becomes a bottom sheet anchored by the
+   same JS-computed coordinates (left/top still apply but are overridden). */
+@media (max-width: 640px) {
+  .model-dropdown {
+    left: 0.5rem !important;
+    right: 0.5rem !important;
+    top: auto !important;
+    bottom: max(0.5rem, env(safe-area-inset-bottom, 0px)) !important;
+    max-height: 70dvh !important;
+    width: auto !important;
+  }
+  /* Rows need real touch height inside the sheet. */
+  .model-dropdown button {
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+  }
+  /* The attach dialogue becomes a bottom sheet too — the 224px popover would
+     sit under the thumb otherwise. Anchored by the same JS coordinates, which
+     the inline styles apply but these override. */
+  .attach-menu {
+    left: 0.5rem !important;
+    right: 0.5rem !important;
+    top: auto !important;
+    bottom: max(0.5rem, env(safe-area-inset-bottom, 0px)) !important;
+    width: auto !important;
+  }
+  .attach-menu button {
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+  }
+}
+
+/* Task drawer on phones: min-width beats max-width in CSS, so the old
+   w-[40vw] min-w-[420px] drawer overflowed a 390px screen by 30px. On
+   small screens it goes full-width. */
+@media (max-width: 640px) {
+  .task-drawer {
+    left: 0 !important;
+    width: 100vw !important;
+    min-width: 0 !important;
+    max-width: 100vw !important;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Vertical rhythm on phones: the reading column's 2rem side padding and the
+   transcript's px-4 gutter compress so a 390px screen spends its width on
+   content, not margins. Applied only under md. */
+@media (max-width: 767px) {
+  .chat-col {
+    padding-inline: 0.5rem;
+  }
+  .page-gutter {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
+/* Header pills -----------------------------------------------------------
+   The session header stacks six controls. On phones the ambient ones
+   (resource sparkline, memory chip text) collapse; the classes below hide
+   what the markup keeps. Hidden at <lg where the header is tightest. */
+@media (max-width: 1023px) {
+  .hide-below-lg {
+    display: none !important;
+  }
+}
+
+/* Settings search input and home hero path shrink on phones */
+@media (max-width: 767px) {
+  .settings-search {
+    width: 10rem;
+  }
+}
+
+/* The transcript code blocks: pre blocks scroll horizontally already; this
+   just rounds their edge into the message bubble on narrow screens. */
+@media (max-width: 767px) {
+  .prose-chat pre {
+    max-width: calc(100vw - 5.5rem);
+  }
+  .code-view pre {
+    max-width: 100%;
+  }
+}
+
+/* ============================================================
+   Project Index
+   The index screen is a workbench — a file tree, a viewer and two
+   dialogs. These classes carry what utilities cannot: colour mixes
+   against the runtime theme variables, the shared segmented control
+   and popover, and the rendered Markdown document.
+   ============================================================ */
+
+/* Segmented control: a recessed track with a raised thumb on the chosen
+   option. Preview/Source, the scope tabs and Changes/Commits all use it, so
+   every "one of these" choice in the module reads the same way. */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+}
+.seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  height: 1.375rem;
+  padding-inline: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.seg-btn:hover {
+  color: var(--text-secondary);
+}
+.seg-btn[aria-selected="true"],
+.seg-btn[aria-pressed="true"] {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-default), 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.seg-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+.seg-count {
+  font-size: 0.625rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.seg-btn[aria-selected="true"] .seg-count {
+  color: var(--text-tertiary);
+}
+
+/* Quiet toolbar button with an optional inline count — the count sits inside
+   the button rather than as a badge hung off its corner, where it clipped. */
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 1.75rem;
+  padding-inline: 0.5rem;
+  border-radius: 7px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tool-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: transparent;
+}
+.tool-btn[aria-pressed="true"],
+.tool-btn.is-open {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.tool-count {
+  min-width: 1rem;
+  height: 1rem;
+  padding-inline: 0.25rem;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.625rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-default);
+}
+.tool-count.is-accent {
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* Split primary button: the incremental run is the button, the full rebuild
+   hides behind its chevron — a costly action one deliberate click away. */
+.split-btn {
+  display: inline-flex;
+  align-items: stretch;
+  height: 2rem;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-primary);
+  box-shadow: var(--shadow-sm);
+}
+.split-btn > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 550;
+  color: inherit;
+  cursor: pointer;
+}
+.split-btn > button:first-child {
+  padding-inline: 0.625rem 0.75rem;
+  border-radius: 8px 0 0 8px;
+}
+.split-btn > button:last-child {
+  padding-inline: 0.4375rem;
+  border-radius: 0 8px 8px 0;
+  border-left: 1px solid color-mix(in srgb, var(--on-primary) 22%, transparent);
+}
+.split-btn > button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--on-primary) 10%, transparent);
+}
+.split-btn > button:disabled {
+  cursor: not-allowed;
+}
+.split-btn:has(> button:first-child:disabled) {
+  opacity: 0.55;
+}
+
+/* Popover — anchored panel for menus, the outline and the index details.
+   Rises from the edge it opens on; `forwards` so a throttled renderer
+   degrades to "no animation", never to "no panel". */
+@keyframes popRise {
+  from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes popDrop {
+  from { opacity: 0; transform: translateY(4px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+.pop {
+  position: fixed;
+  z-index: 230;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  animation: popRise 0.16s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.pop[data-side="top"] {
+  animation-name: popDrop;
+}
+.pop:focus-visible {
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.pop-label {
+  padding: 0.5rem 0.75rem 0.25rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.pop-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.4375rem 0.625rem;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.pop-item:hover,
+.pop-item:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+.pop-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: transparent;
+}
+.pop-sep {
+  height: 1px;
+  margin: 0.25rem 0.5rem;
+  background: var(--border-subtle);
+}
+
+/* Dialog panel: scales in on desktop, rises as a bottom sheet on phones. */
+@keyframes sheetUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: none; }
+}
+.dlg-panel {
+  animation: scaleIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.dlg-panel:focus-visible {
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+@media (max-width: 639px) {
+  .dlg-panel {
+    animation-name: sheetUp;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/* Skeleton block for loading states that must hold their final height. */
+.skel {
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--bg-elevated) 0%, var(--bg-hover) 50%, var(--bg-elevated) 100%);
+  background-size: 400px 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* Tree status: the index marks what it does not hold yet. A finished index
+   is the normal state, so a check on every row was 600 marks saying nothing;
+   the ring on the exceptions is the one thing worth finding. */
+.idx-pending-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  flex-shrink: 0;
+}
+.idx-done-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--success);
+  flex-shrink: 0;
+}
+.idx-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  overflow: hidden;
+}
+.idx-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-ring);
+  transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.tree-row-selected {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.tree-row-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+.tree-mark {
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  color: var(--text-primary);
+  border-radius: 2px;
+}
+
+/* Remove buttons that only appear on hover stay visible on touch screens,
+   where there is no hover to reveal them. */
+@media (hover: none) {
+  .hover-reveal {
+    opacity: 1 !important;
+  }
+}
+
+/* ------------------------------------------------------------
+   Rendered Markdown document (the viewer's Preview mode)
+   A document you read, not a chat reply: GitHub's structure — ruled
+   h1/h2, bordered tables, alerts, task lists — in the app's palette.
+   Kept apart from .prose-chat so the chat's compact rhythm and a
+   README's reading rhythm can each be right.
+   ------------------------------------------------------------ */
+.md-doc {
+  max-width: 52rem;
+  margin-inline: auto;
+  padding: 1.75rem 2.25rem 4rem;
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  color: #d4d4d8;
+  letter-spacing: -0.003em;
+  overflow-wrap: break-word;
+}
+@media (max-width: 767px) {
+  .md-doc {
+    padding: 1.25rem 1rem 3rem;
+    font-size: 0.875rem;
+  }
+}
+.md-doc > :first-child { margin-top: 0 !important; }
+.md-doc > :last-child { margin-bottom: 0 !important; }
+.md-doc p,
+.md-doc ul,
+.md-doc ol,
+.md-doc blockquote,
+.md-doc pre,
+.md-doc details,
+.md-doc .md-table,
+.md-doc .md-alert,
+.md-doc .code-block,
+.md-doc .math-block {
+  margin: 0 0 1rem;
+}
+.md-doc .code-block > pre {
+  margin: 0;
+}
+.md-doc h1,
+.md-doc h2,
+.md-doc h3,
+.md-doc h4,
+.md-doc h5,
+.md-doc h6 {
+  margin: 1.75em 0 0.6em;
+  font-weight: 640;
+  line-height: 1.3;
+  letter-spacing: -0.018em;
+  color: var(--text-primary);
+  scroll-margin-top: 1rem;
+}
+.md-doc h1 {
+  font-size: 1.75em;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.md-doc h2 {
+  font-size: 1.375em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.md-doc h3 { font-size: 1.15em; }
+.md-doc h4 { font-size: 1em; }
+.md-doc h5 { font-size: 0.9em; }
+.md-doc h6 { font-size: 0.85em; color: var(--text-tertiary); }
+.md-doc .md-flash {
+  animation: mdFlash 1.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes mdFlash {
+  0%   { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  100% { background: transparent; }
+}
+.md-doc strong { color: var(--text-primary); font-weight: 620; }
+.md-doc a {
+  color: #ffb38a;
+  text-decoration: none;
+}
+.md-doc a:hover {
+  color: #ffc9a8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-doc ul,
+.md-doc ol {
+  padding-left: 1.6em;
+}
+.md-doc ul { list-style: disc; }
+.md-doc ol { list-style: decimal; }
+.md-doc ul ul { list-style: circle; }
+.md-doc ul ul ul { list-style: square; }
+.md-doc li + li { margin-top: 0.3em; }
+.md-doc li > ul,
+.md-doc li > ol { margin: 0.3em 0 0; }
+.md-doc li > p { margin: 0 0 0.5em; }
+.md-doc li::marker { color: var(--text-muted); }
+.md-doc li:has(> input[type="checkbox"]),
+.md-doc li:has(> p:first-child > input[type="checkbox"]:first-child) {
+  list-style: none;
+  margin-left: -1.4em;
+}
+.md-doc input[type="checkbox"] {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin: 0 0.5em 0 0;
+  vertical-align: -0.14em;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+}
+.md-doc input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.md-doc input[type="checkbox"]:checked::after {
+  content: '';
+  width: 0.45rem;
+  height: 0.25rem;
+  margin-top: -0.1rem;
+  border: solid var(--on-primary);
+  border-width: 0 0 1.75px 1.75px;
+  transform: rotate(-45deg);
+}
+.md-doc code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 0.12em 0.4em;
+  border-radius: 5px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-subtle);
+  color: #e4e4e7;
+}
+.md-doc pre {
+  background: #0d0d10;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 0.875rem 1rem;
+  overflow-x: auto;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.md-doc pre code,
+.md-doc pre code.hljs {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: inherit;
+  color: #e4e4e7;
+  white-space: pre;
+}
+.md-doc blockquote {
+  padding: 0.1em 0 0.1em 1em;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+.md-doc blockquote > :last-child { margin-bottom: 0; }
+.md-doc hr {
+  height: 1px;
+  margin: 2rem 0;
+  border: 0;
+  background: var(--border-default);
+}
+.md-doc img {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+}
+.md-doc .md-img-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+.md-doc .md-table {
+  overflow-x: auto;
+}
+.md-doc table {
+  border-collapse: collapse;
+  font-size: 0.875em;
+}
+.md-doc th,
+.md-doc td {
+  padding: 0.45em 0.85em;
+  border: 1px solid var(--border-default);
+  vertical-align: top;
+}
+.md-doc th:not([align]),
+.md-doc td:not([align]) {
+  text-align: left;
+}
+.md-doc th {
+  background: var(--bg-elevated);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.md-doc tbody tr:nth-child(2n) td {
+  background: color-mix(in srgb, var(--bg-surface) 85%, transparent);
+}
+.md-doc kbd {
+  display: inline-block;
+  padding: 0 0.35em;
+  border: 1px solid var(--border-default);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  color: var(--text-secondary);
+}
+.md-doc details {
+  padding: 0.5rem 0.875rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+.md-doc summary {
+  cursor: pointer;
+  font-weight: 550;
+  color: var(--text-primary);
+}
+.md-doc details[open] > summary {
+  margin-bottom: 0.5rem;
+}
+.md-doc .mermaid {
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+  margin: 0 0 1rem;
+  overflow-x: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.md-doc .math-block {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+/* GitHub alerts: > [!NOTE], [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION]. */
+.md-alert {
+  padding: 0.625rem 1rem;
+  border-left: 3px solid var(--md-alert);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--md-alert) 7%, transparent);
+  color: var(--text-secondary);
+}
+.md-alert > :last-child { margin-bottom: 0; }
+.md-doc .md-alert-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.25rem;
+  font-size: 0.9em;
+  font-weight: 600;
+  color: var(--md-alert);
+}
+.md-alert-note      { --md-alert: #58a6ff; }
+.md-alert-tip       { --md-alert: var(--success); }
+.md-alert-important { --md-alert: var(--reasoning); }
+.md-alert-warning   { --md-alert: var(--warning); }
+.md-alert-caution   { --md-alert: var(--danger); }
+/* YAML front matter, shown the way GitHub does: as a table, not a stray rule. */
+.md-front {
+  margin: 0 0 1.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.md-front-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, max-content) 1fr;
+}
+.md-front-row + .md-front-row {
+  border-top: 1px solid var(--border-subtle);
+}
+.md-front-key {
+  padding: 0.375rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+}
+.md-front-val {
+  padding: 0.375rem 0.75rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}

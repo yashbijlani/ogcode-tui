@@ -1,0 +1,135 @@
+package provider
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+// OGX is the subscription plan sold by OG Lab. Inference runs through OG Lab's
+// gateway, which speaks the OpenAI Chat Completions API, so the provider is an
+// ordinary *OpenAIProvider pointed at the gateway with the token the connect
+// flow stored — no protocol of its own.
+//
+// Two things make it different from every other OpenAI-compatible endpoint:
+//
+//   - The gateway's /v1/models IS the plan. It returns exactly the models the
+//     account's plan grants, and an empty list when the plan grants none. So
+//     Models() has no static fallback: a catalogue that comes back empty means
+//     the plan carries nothing, and offering a fallback would present models
+//     the account cannot reach.
+//   - The token is durable and per-install, and the gateway reads the
+//     prompt_cache_key field as the session identity for token spend, so every
+//     request carries it.
+//
+// Registration is gated on the stored link carrying a plan (session.OGXAccount
+// .HasPlan). A planless link contributes no provider at all, which is what keeps
+// it from becoming the default. One residual case is left unguarded: a plan
+// whose catalogue fetches empty registers a provider that can serve nothing, and
+// ProviderPriority would place it ahead of every other provider. That only
+// happens for a plan with no granted models, which the settings screen surfaces
+// as an empty, explained list rather than a failure.
+const OGXProviderID = "ogx"
+
+// OGXAppID is the first-party identity ogcode presents to the gateway when it
+// asserts its requests. It matches the `app` the connect flow registers with,
+// and it is the key the gateway's app-secret table looks the shared secret up
+// under.
+const OGXAppID = "ogcode"
+
+// DefaultOGXGatewayURL is OG Lab's gateway, the endpoint the OGX token is valid
+// against. OGX_GATEWAY_URL overrides it — development and staging point this at
+// a local gateway.
+const DefaultOGXGatewayURL = "https://ogx.ogcode.in/v1"
+
+// OGXAppSecret is the shared secret ogcode signs its gateway requests with, so
+// the gateway admits this first-party client and not a bearer token copied out
+// of it. It is baked in at build time via ldflags (see the Makefile) and reads
+// from the OGX_APP_SECRET environment variable there, so a release binary
+// carries the identity while a local build leaves it empty and unasserted.
+var OGXAppSecret = ""
+
+// OGXGatewayURL returns the gateway base URL to use, honouring OGX_GATEWAY_URL.
+func OGXGatewayURL() string {
+	if u := strings.TrimSpace(os.Getenv("OGX_GATEWAY_URL")); u != "" {
+		return u
+	}
+	return DefaultOGXGatewayURL
+}
+
+// NewOGXProvider creates the provider for a connected OGX account. The model is
+// left empty on purpose: unlike the other OpenAI-compatible providers there is
+// no useful guess to make, because the gateway is the only thing that knows
+// what the plan grants — Models() resolves a default from the fetched
+// catalogue. The collection is empty too, so the UI groups the models under the
+// provider id ("ogx") rather than inventing a label.
+func NewOGXProvider(token string) (*OpenAIProvider, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, fmt.Errorf("ogx: empty token")
+	}
+	return &OpenAIProvider{
+		id:        OGXProviderID,
+		apiKey:    token,
+		baseURL:   OGXGatewayURL(),
+		appID:     OGXAppID,
+		appSecret: strings.TrimSpace(OGXAppSecret),
+	}, nil
+}
+
+// ErrOGXTokenRevoked is CheckOGXPlan's answer when the gateway no longer
+// accepts the stored install token — the link was revoked on the web side, so
+// only connecting again can restore it.
+var ErrOGXTokenRevoked = errors.New("ogx: the gateway no longer accepts this install token")
+
+// CheckOGXPlan asks the gateway, now, how many models the linked plan grants.
+// It is the one live answer to "does this account hold a plan": the connect
+// flow records the plan once, and a plan bought, lapsed or cancelled after that
+// is only visible here. Unlike RefreshCatalog it keeps "the plan grants
+// nothing" (0, nil) apart from "the gateway could not be asked" (an error),
+// because the settings screen acts on the first and must not on the second.
+//
+// A 401 is the token's fault only when the gateway says so: it also answers
+// 401 to a build that cannot sign its requests, and that is not something a
+// reconnect would fix.
+func CheckOGXPlan(ctx context.Context, token string) (int, error) {
+	p, err := NewOGXProvider(token)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(p.baseURL, "/")+"/models", nil)
+	if err != nil {
+		return 0, err
+	}
+	p.setChatHeaders(req)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("ogx: reach gateway: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		var list oaiModelsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+			return 0, fmt.Errorf("ogx: decode gateway models: %w", err)
+		}
+		return len(list.Data), nil
+	case resp.StatusCode == http.StatusUnauthorized:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		if strings.Contains(string(body), "install token") {
+			return 0, ErrOGXTokenRevoked
+		}
+		return 0, fmt.Errorf("ogx: gateway refused this client: %s", strings.TrimSpace(string(body)))
+	default:
+		return 0, fmt.Errorf("ogx: gateway answered %d", resp.StatusCode)
+	}
+}

@@ -1,0 +1,134 @@
+# GoReleaser configuration for ogcode
+# See: https://goreleaser.com
+
+version: 2
+
+project_name: ogcode
+
+# No `before` hooks: binaries (with the embedded web UI) are built natively
+# per-platform in the release workflow before GoReleaser runs. See release.yml.
+
+builds:
+  - id: ogcode
+    main: .
+    binary: ogcode
+    # ogcode links github.com/gen2brain/go-fitz, which only statically links
+    # libmupdf (no runtime libmupdf.* dependency) when built with CGO_ENABLED=1
+    # against the target platform's C toolchain. Reliable CGO cross-compilation
+    # of that C codebase from one runner is impractical and GoReleaser OSS has no
+    # `prebuilt` builder, so the release workflow builds each target natively and
+    # this gobinary shim makes GoReleaser package those prebuilt binaries while
+    # still producing archives, checksums, the Homebrew formula and the winget
+    # manifest. Version/commit/date are injected during the native build.
+    tool: ./tools/gobuild-shim.sh
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=1
+
+archives:
+  - id: ogcode
+    ids:
+      - ogcode
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE*
+      - README*
+
+winget:
+  - name: ogcode
+    # Don't push a winget manifest for prereleases (e.g. -rc/-beta tags).
+    skip_upload: "auto"
+    publisher: prasenjeet-symon
+    license: AGPL-3.0-only
+    license_url: "https://github.com/prasenjeet-symon/ogcode/blob/main/LICENSE"
+    short_description: "Agentic coding assistant with web UI"
+    description: "ogcode is an agentic coding assistant with a web UI that helps you write, review, and manage code."
+    homepage: "https://github.com/prasenjeet-symon/ogcode"
+    publisher_url: "https://github.com/prasenjeet-symon"
+    repository:
+      owner: prasenjeet-symon
+      name: winget-pkgs
+      branch: "{{ .ProjectName }}-{{ .Version }}"
+      token: "{{ .Env.WINGET_PKGS_TOKEN }}"
+    commit_author:
+      name: Prasenjeet Symon
+      email: prasenjeet-symon@users.noreply.github.com
+    commit_msg_template: "{{ .PackageIdentifier }} {{ .Version }}"
+    path: manifests/p/prasenjeet-symon/ogcode/{{.Version}}
+    ids:
+      - ogcode
+    tags:
+      - ogcode
+      - coding-assistant
+    publisher_support_url: "https://github.com/prasenjeet-symon/ogcode/issues"
+    release_notes_url: "https://github.com/prasenjeet-symon/ogcode/releases/tag/{{.Tag}}"
+
+brews:
+  - name: ogcode
+    # Don't update the Homebrew tap for prereleases (e.g. -rc/-beta tags).
+    skip_upload: "auto"
+    repository:
+      owner: prasenjeet-symon
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.WINGET_PKGS_TOKEN }}"
+    commit_author:
+      name: Prasenjeet Symon
+      email: prasenjeet-symon@users.noreply.github.com
+    commit_msg_template: "ogcode {{ .Version }}"
+    directory: Formula
+    homepage: "https://github.com/prasenjeet-symon/ogcode"
+    description: "Agentic coding assistant with web UI"
+    license: AGPL-3.0-only
+    test: |
+      system "#{bin}/ogcode", "--help"
+    caveats: |
+      ogcode installed! Run `ogcode --help` to get started.
+
+      Web search is built in and enabled by default — nothing else to install.
+    install: |
+      bin.install "ogcode"
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: prasenjeet-symon
+    name: ogcode
+  draft: false
+  prerelease: auto
+
+# GitHub Actions will need GITHUB_TOKEN, so we don't need goreleaser pro
+# For signing (optional), you can enable later

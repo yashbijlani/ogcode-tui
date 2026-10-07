@@ -1,0 +1,160 @@
+package session
+
+import (
+	"database/sql"
+
+	"github.com/prasenjeet-symon/ogcode/internal/db"
+)
+
+func modelStore() *ModelPreferenceStore {
+	return &ModelPreferenceStore{}
+}
+
+type ModelPreferenceStore struct{}
+
+// GetModelPreferences returns all model preference overrides from the database.
+func GetModelPreferences(database *db.DB) ([]*ModelPreference, error) {
+	rows, err := database.Query(
+		`SELECT id, enabled, provider_id, display_name, is_custom, collection, time_created, time_updated
+		 FROM model_preference ORDER BY time_created ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var prefs []*ModelPreference
+	for rows.Next() {
+		var p ModelPreference
+		var enabled int
+		var isCustom int
+		var collection sql.NullString
+		if err := rows.Scan(&p.ID, &enabled, &p.ProviderID, &p.DisplayName, &isCustom, &collection, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		p.Enabled = enabled == 1
+		p.IsCustom = isCustom == 1
+		p.Collection = collection.String
+		prefs = append(prefs, &p)
+	}
+	return prefs, nil
+}
+
+// SetModelPreference upserts a model preference into the database.
+//
+// Keyed by (id, provider_id): the same model id can be served by two providers
+// (glm-5.3-flash exists under both the OGX plan and a custom OpenAI-compatible
+// endpoint), and each provider's enabled state is its own — a toggle on one
+// must not overwrite the other's row.
+func SetModelPreference(database *db.DB, p *ModelPreference) error {
+	enabled := 0
+	if p.Enabled {
+		enabled = 1
+	}
+	isCustom := 0
+	if p.IsCustom {
+		isCustom = 1
+	}
+	_, err := database.Exec(
+		`INSERT INTO model_preference (id, enabled, provider_id, display_name, is_custom, collection, time_created, time_updated)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id, provider_id) DO UPDATE SET
+			enabled = excluded.enabled,
+			display_name = excluded.display_name,
+			is_custom = excluded.is_custom,
+			collection = excluded.collection,
+			time_updated = excluded.time_updated`,
+		p.ID, enabled, p.ProviderID, p.DisplayName, isCustom, p.Collection, p.CreatedAt, p.UpdatedAt,
+	)
+	return err
+}
+
+// DeleteModelPreference removes the one provider's preference for a model; the
+// same id under another provider keeps its own row.
+func DeleteModelPreference(database *db.DB, id string, providerID string) error {
+	_, err := database.Exec(
+		`DELETE FROM model_preference WHERE id = ? AND provider_id = ?`, id, providerID,
+	)
+	return err
+}
+
+// GetModelCapability returns the persisted capability record for a model.
+// The second return value is false when no record exists (not yet probed).
+func GetModelCapability(database *db.DB, modelID string) (*ModelCapability, bool, error) {
+	row := database.QueryRow(
+		`SELECT model_id, supports_images, probed_at, context_window FROM model_capability WHERE model_id = ?`,
+		modelID,
+	)
+	var c ModelCapability
+	var supportsImages int
+	if err := row.Scan(&c.ModelID, &supportsImages, &c.ProbedAt, &c.ContextWindow); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	c.SupportsImages = supportsImages == 1
+	return &c, true, nil
+}
+
+// SetModelCapability upserts a probed capability record for a model.
+//
+// The upsert MERGES rather than replaces: supports_images and probed_at are
+// taken from the incoming record (an image probe is authoritative each time it
+// runs), but a learned context window survives a write that carries none —
+// otherwise the image probe (which always writes ContextWindow 0) would erase
+// a window the loop learned from an overflow error. Only an explicit positive
+// ContextWindow in the incoming record overwrites the stored one.
+func SetModelCapability(database *db.DB, c *ModelCapability) error {
+	supportsImages := 0
+	if c.SupportsImages {
+		supportsImages = 1
+	}
+	_, err := database.Exec(
+		`INSERT INTO model_capability (model_id, supports_images, probed_at, context_window)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(model_id) DO UPDATE SET
+		   supports_images = excluded.supports_images,
+		   probed_at = excluded.probed_at,
+		   context_window = CASE WHEN excluded.context_window > 0
+		                          THEN excluded.context_window
+		                          ELSE model_capability.context_window END`,
+		c.ModelID, supportsImages, c.ProbedAt, c.ContextWindow,
+	)
+	return err
+}
+
+// LearnModelContextWindow records a context window discovered from a
+// context-overflow error body, without disturbing whatever else is known about
+// the model. Windows ≤ 0 (nothing parsed) are ignored. When no capability
+// record exists yet, one is created carrying only the window — the image
+// fields stay at their defaults until a probe writes them.
+func LearnModelContextWindow(database *db.DB, modelID string, window int) error {
+	if window <= 0 {
+		return nil
+	}
+	if cap, ok, err := GetModelCapability(database, modelID); err != nil {
+		return err
+	} else if ok {
+		cap.ContextWindow = window
+		cap.ProbedAt = Now()
+		return SetModelCapability(database, cap)
+	}
+	return SetModelCapability(database, &ModelCapability{
+		ModelID:       modelID,
+		ContextWindow: window,
+		ProbedAt:      Now(),
+	})
+}
+
+// DeleteModelCapability clears a model's cached capability so it is re-probed on
+// next use. An empty modelID clears every cached capability. Used by the
+// manual-refresh path.
+func DeleteModelCapability(database *db.DB, modelID string) error {
+	if modelID == "" {
+		_, err := database.Exec(`DELETE FROM model_capability`)
+		return err
+	}
+	_, err := database.Exec(`DELETE FROM model_capability WHERE model_id = ?`, modelID)
+	return err
+}

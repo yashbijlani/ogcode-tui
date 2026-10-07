@@ -1,0 +1,10 @@
+title: ogcode
+description: The coding agent with a memory. Ogcode remembers your project, your decisions and every conversation you've had about them — so it picks up where you left off, and costs about 70% less to run. Self-hosted, one Go binary, any model.
+url: "https://ogcode.in"
+
+theme: null
+
+# Serve everything from docs/ as static files
+# install.sh will be served as text/plain automatically by GitHub Pages
+include:
+  - install.sh

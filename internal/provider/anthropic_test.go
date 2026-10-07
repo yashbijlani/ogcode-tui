@@ -1,0 +1,625 @@
+package provider
+
+import (
+	"encoding/json"
+	"io"
+	"strings"
+	"testing"
+)
+
+// TestAnthropicThinkingBlocksInAssistantMessages verifies that reasoning/thinking
+// blocks from previous assistant turns are forwarded back to the Anthropic API
+// as "thinking" content blocks. Without this, multi-turn thinking breaks with an
+// API error: "Expected `thinking` or `redacted_thinking`".
+func TestAnthropicThinkingBlocksInAssistantMessages(t *testing.T) {
+	// Simulate a multi-turn conversation where the assistant produced thinking
+	// content in the previous turn. The ModelMessage carries ReasoningParts
+	// that must be rendered as Anthropic "thinking" content blocks.
+	messages := []ModelMessage{
+		{Role: "user", Content: json.RawMessage(`"What is 2+2?"`)},
+		{
+			Role:    "assistant",
+			Content: json.RawMessage(`"4"`),
+			ReasoningParts: []ReasoningPart{
+				{Text: "The user is asking a simple arithmetic question.", Signature: "ErkBCgIYAhIM..."},
+			},
+		},
+		{Role: "user", Content: json.RawMessage(`"And 3+3?"`)},
+	}
+
+	req := StreamRequest{
+		Model:    "claude-sonnet-4-6",
+		System:   []string{"You are a math tutor."},
+		Messages: messages,
+	}
+
+	// Replicate the message-building logic from StreamChat
+	anthropicMessages := make([]anthropicMessage, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		if m.Role == "system" {
+			continue
+		}
+
+		if m.ToolCallID != "" {
+			// Tool result handling (not relevant to this test)
+		} else if m.ToolCalls != nil {
+			// Assistant with tool calls (not relevant to this test)
+		} else if m.Role == "assistant" && len(m.ReasoningParts) > 0 {
+			// Assistant message with thinking blocks: thinking blocks must
+			// precede text blocks per Anthropic API requirements.
+			var blocks []map[string]any
+			for _, rp := range m.ReasoningParts {
+				blocks = append(blocks, map[string]any{
+					"type":      "thinking",
+					"thinking":  rp.Text,
+					"signature": rp.Signature,
+				})
+			}
+			var text string
+			if m.Content != nil {
+				json.Unmarshal(m.Content, &text)
+			}
+			if text != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": text})
+			}
+			anthropicMessages = append(anthropicMessages, anthropicMessage{Role: "assistant", Content: blocks})
+		} else {
+			var content any
+			if err := json.Unmarshal(m.Content, &content); err != nil {
+				content = string(m.Content)
+			}
+			anthropicMessages = append(anthropicMessages, anthropicMessage{
+				Role:    m.Role,
+				Content: content,
+			})
+		}
+	}
+
+	// Verify the assistant message has thinking blocks
+	if len(anthropicMessages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(anthropicMessages))
+	}
+
+	// Second message should be the assistant message with thinking
+	assistantMsg := anthropicMessages[1]
+	if assistantMsg.Role != "assistant" {
+		t.Errorf("expected assistant role, got %s", assistantMsg.Role)
+	}
+
+	blocks, ok := assistantMsg.Content.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected Content to be []map[string]any, got %T", assistantMsg.Content)
+	}
+
+	// First block should be thinking
+	if len(blocks) < 2 {
+		t.Fatalf("expected at least 2 blocks (thinking + text), got %d", len(blocks))
+	}
+
+	thinkingBlock := blocks[0]
+	if thinkingBlock["type"] != "thinking" {
+		t.Errorf("expected first block type 'thinking', got %v", thinkingBlock["type"])
+	}
+	if thinkingBlock["thinking"] != "The user is asking a simple arithmetic question." {
+		t.Errorf("expected thinking text, got %v", thinkingBlock["thinking"])
+	}
+	if thinkingBlock["signature"] != "ErkBCgIYAhIM..." {
+		t.Errorf("expected signature, got %v", thinkingBlock["signature"])
+	}
+
+	// Second block should be text
+	textBlock := blocks[1]
+	if textBlock["type"] != "text" {
+		t.Errorf("expected second block type 'text', got %v", textBlock["type"])
+	}
+}
+
+// TestAnthropicThinkingBlocksWithToolCalls verifies that thinking blocks are
+// placed before tool_use blocks in assistant messages with tool calls.
+func TestAnthropicThinkingBlocksWithToolCalls(t *testing.T) {
+	// Assistant message with both reasoning and tool calls
+	messages := []ModelMessage{
+		{Role: "user", Content: json.RawMessage(`"Read the file"`)},
+		{
+			Role:      "assistant",
+			ToolCalls: json.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"read","arguments":"{\"path\":\"/tmp/test\"}"}}]`),
+			ReasoningParts: []ReasoningPart{
+				{Text: "I need to read the file first.", Signature: "Sig123=="},
+			},
+		},
+	}
+
+	// Replicate the Anthropic message-building logic for tool calls with thinking
+	anthropicMessages := make([]anthropicMessage, 0)
+	for _, m := range messages {
+		if m.ToolCalls != nil {
+			type oaiFn struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			}
+			type oaiCall struct {
+				ID       string `json:"id"`
+				Function oaiFn  `json:"function"`
+			}
+			var calls []oaiCall
+			var blocks []map[string]any
+			if err := json.Unmarshal(m.ToolCalls, &calls); err == nil {
+				// Prepend thinking blocks first (required by Anthropic API)
+				for _, rp := range m.ReasoningParts {
+					blocks = append(blocks, map[string]any{
+						"type":      "thinking",
+						"thinking":  rp.Text,
+						"signature": rp.Signature,
+					})
+				}
+				for _, call := range calls {
+					var input any
+					json.Unmarshal([]byte(call.Function.Arguments), &input)
+					if _, ok := input.(map[string]any); !ok {
+						input = map[string]any{}
+					}
+					blocks = append(blocks, map[string]any{
+						"type":  "tool_use",
+						"id":    call.ID,
+						"name":  call.Function.Name,
+						"input": input,
+					})
+				}
+			}
+			anthropicMessages = append(anthropicMessages, anthropicMessage{Role: "assistant", Content: blocks})
+		}
+	}
+
+	if len(anthropicMessages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(anthropicMessages))
+	}
+
+	blocks, ok := anthropicMessages[0].Content.([]map[string]any)
+	if !ok {
+		t.Fatalf("expected Content to be []map[string]any, got %T", anthropicMessages[0].Content)
+	}
+
+	// First block must be thinking (not tool_use)
+	if blocks[0]["type"] != "thinking" {
+		t.Errorf("expected first block to be 'thinking', got %v", blocks[0]["type"])
+	}
+	// Second block must be tool_use
+	if blocks[1]["type"] != "tool_use" {
+		t.Errorf("expected second block to be 'tool_use', got %v", blocks[1]["type"])
+	}
+}
+
+// TestAnthropicRedactedThinkingEvent verifies that a redacted_thinking
+// content_block_start event is parsed with its payload intact. The block
+// carries no text deltas and no signature: the opaque `data` field is the
+// entire block, and losing it means it cannot be replayed at all.
+func TestAnthropicRedactedThinkingEvent(t *testing.T) {
+	raw := `{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"EuYBCg=="}}`
+
+	var evt anthropicEvent
+	if err := json.Unmarshal([]byte(raw), &evt); err != nil {
+		t.Fatalf("failed to parse redacted_thinking event: %v", err)
+	}
+	if evt.ContentBlock == nil {
+		t.Fatal("expected non-nil ContentBlock")
+	}
+	if evt.ContentBlock.Type != "redacted_thinking" {
+		t.Errorf("expected content block type 'redacted_thinking', got %q", evt.ContentBlock.Type)
+	}
+	if evt.ContentBlock.Data != "EuYBCg==" {
+		t.Errorf("expected data 'EuYBCg==', got %q", evt.ContentBlock.Data)
+	}
+}
+
+// TestAnthropicRedactedThinkingStreamsAsRedactedEvent drives the SSE parser and
+// checks that a redacted block surfaces as its own event carrying the payload,
+// rather than as an empty reasoning block with a signature.
+func TestAnthropicRedactedThinkingStreamsAsRedactedEvent(t *testing.T) {
+	sse := "event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"EuYBCg=="}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	p := NewAnthropicProvider()
+	ch := make(chan StreamEvent, 8)
+	p.streamEvents(io.NopCloser(strings.NewReader(sse)), ch, func() {})
+
+	var got []StreamEvent
+	for evt := range ch {
+		got = append(got, evt)
+	}
+	var redacted *StreamEvent
+	for i := range got {
+		if got[i].Type == EventReasoningRedacted {
+			redacted = &got[i]
+		}
+		if got[i].Type == EventReasoning {
+			t.Errorf("redacted block must not surface as a reasoning event: %+v", got[i])
+		}
+	}
+	if redacted == nil {
+		t.Fatalf("expected an EventReasoningRedacted, got %+v", got)
+	}
+	if redacted.RedactedData != "EuYBCg==" {
+		t.Errorf("expected payload 'EuYBCg==', got %q", redacted.RedactedData)
+	}
+}
+
+// TestAnthropicTextFreeThinkingBlockStreams covers the shape current models
+// produce by default: `display` is "omitted", so the thinking block carries no
+// thinking_delta at all and only the block start and the closing signature
+// reach the client. Both must surface, or the block is lost and the assistant
+// turn replays incomplete.
+func TestAnthropicTextFreeThinkingBlockStreams(t *testing.T) {
+	sse := "event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ErkBCg=="}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	p := NewAnthropicProvider()
+	ch := make(chan StreamEvent, 8)
+	p.streamEvents(io.NopCloser(strings.NewReader(sse)), ch, func() {})
+
+	var kinds []StreamEventType
+	var signature string
+	for evt := range ch {
+		kinds = append(kinds, evt.Type)
+		if evt.Type == EventReasoningSignature {
+			signature = evt.Signature
+		}
+	}
+	var sawStart bool
+	for _, k := range kinds {
+		if k == EventReasoningStart {
+			sawStart = true
+		}
+	}
+	if !sawStart {
+		t.Errorf("expected the block start to surface, got %v", kinds)
+	}
+	if signature != "ErkBCg==" {
+		t.Errorf("expected the closing signature, got %q", signature)
+	}
+}
+
+// TestAnthropicRedactedThinkingForwardedAsRedactedBlock verifies the outbound
+// half of the round-trip: a stored redacted block goes back as a
+// redacted_thinking block with its data, not as a thinking block with an empty
+// signature. The API compares the blocks it receives against what it generated,
+// so a reshaped block is rejected with a 400.
+func TestAnthropicRedactedThinkingForwardedAsRedactedBlock(t *testing.T) {
+	block := anthropicThinkingBlock(ReasoningPart{RedactedData: "EuYBCg=="})
+	if block["type"] != "redacted_thinking" {
+		t.Errorf("expected type 'redacted_thinking', got %v", block["type"])
+	}
+	if block["data"] != "EuYBCg==" {
+		t.Errorf("expected data preserved, got %v", block["data"])
+	}
+	if _, ok := block["signature"]; ok {
+		t.Error("redacted block must not carry a signature field")
+	}
+	if _, ok := block["thinking"]; ok {
+		t.Error("redacted block must not carry a thinking field")
+	}
+
+	// An ordinary thinking block still renders as one, signature intact.
+	plain := anthropicThinkingBlock(ReasoningPart{Text: "reasoning", Signature: "ErkBCg=="})
+	if plain["type"] != "thinking" || plain["thinking"] != "reasoning" || plain["signature"] != "ErkBCg==" {
+		t.Errorf("plain thinking block wrong: %v", plain)
+	}
+}
+
+// TestAnthropicPromptCaching verifies that the Anthropic provider emits
+// cache_control markers on the system prompt block and the last tool
+// definition, enabling prompt caching for repeated prefixes.
+func TestAnthropicPromptCaching(t *testing.T) {
+	req := StreamRequest{
+		Model:  "claude-sonnet-4-6",
+		System: []string{"You are a helpful coding assistant.", "Working directory: /tmp"},
+		Messages: []ModelMessage{
+			{Role: "user", Content: json.RawMessage(`"Hello"`)},
+		},
+		Tools: []ToolDefinition{
+			{Name: "bash", Description: "Run a shell command", Parameters: json.RawMessage(`{"type":"object"}`)},
+			{Name: "read", Description: "Read a file", Parameters: json.RawMessage(`{"type":"object"}`)},
+		},
+	}
+
+	// StreamChat sends an HTTP request immediately; we can't easily intercept
+	// it. Instead, replicate the exact request-building logic to verify the
+	// JSON structure. This mirrors the code in StreamChat.
+
+	systemPrompt := strings.Join(req.System, "\n\n")
+
+	tools := make([]anthropicTool, 0, len(req.Tools))
+	for _, tt := range req.Tools {
+		tools = append(tools, anthropicTool{
+			Name:        tt.Name,
+			Description: tt.Description,
+			InputSchema: tt.Parameters,
+		})
+	}
+
+	systemBlocks := []anthropicSystemBlock{
+		{Type: "text", Text: systemPrompt, CacheControl: &anthropicCacheControl{Type: "ephemeral"}},
+	}
+	if len(tools) > 0 {
+		tools[len(tools)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+	}
+
+	body := anthropicRequest{
+		Model:     req.Model,
+		MaxTokens: max(req.MaxTokens, 4096),
+		System:    systemBlocks,
+		Messages:  []anthropicMessage{{Role: "user", Content: "Hello"}},
+		Tools:     tools,
+		Stream:    true,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	// Parse back to inspect the structure.
+	var raw map[string]any
+	if err := json.Unmarshal(jsonBody, &raw); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+
+	// System must be an array of blocks, not a plain string.
+	sysRaw, ok := raw["system"].([]any)
+	if !ok {
+		t.Fatalf("expected system to be an array, got %T", raw["system"])
+	}
+	if len(sysRaw) != 1 {
+		t.Fatalf("expected 1 system block, got %d", len(sysRaw))
+	}
+	sysBlock, ok := sysRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected system block to be an object, got %T", sysRaw[0])
+	}
+	if sysBlock["type"] != "text" {
+		t.Errorf("expected system block type 'text', got %v", sysBlock["type"])
+	}
+	cc, ok := sysBlock["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatal("expected cache_control on system block")
+	}
+	if cc["type"] != "ephemeral" {
+		t.Errorf("expected cache_control type 'ephemeral', got %v", cc["type"])
+	}
+
+	// Last tool must have cache_control.
+	toolsRaw, ok := raw["tools"].([]any)
+	if !ok {
+		t.Fatalf("expected tools to be an array, got %T", raw["tools"])
+	}
+	if len(toolsRaw) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(toolsRaw))
+	}
+	lastTool, ok := toolsRaw[len(toolsRaw)-1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected last tool to be an object, got %T", toolsRaw[len(toolsRaw)-1])
+	}
+	lastCC, ok := lastTool["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatal("expected cache_control on last tool")
+	}
+	if lastCC["type"] != "ephemeral" {
+		t.Errorf("expected last tool cache_control type 'ephemeral', got %v", lastCC["type"])
+	}
+
+	// First tool must NOT have cache_control (only the last one is marked).
+	firstTool, ok := toolsRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first tool to be an object, got %T", toolsRaw[0])
+	}
+	if _, hasCC := firstTool["cache_control"]; hasCC {
+		t.Error("did not expect cache_control on first tool")
+	}
+}
+
+// TestAnthropicNoToolsNoCacheControlOnTools verifies that when there are no
+// tools, we don't panic and the system block still gets its cache_control.
+func TestAnthropicNoToolsNoCacheControlOnTools(t *testing.T) {
+	systemBlocks := []anthropicSystemBlock{
+		{Type: "text", Text: "system prompt", CacheControl: &anthropicCacheControl{Type: "ephemeral"}},
+	}
+	tools := make([]anthropicTool, 0)
+
+	if len(tools) > 0 {
+		tools[len(tools)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+	}
+
+	body := anthropicRequest{
+		Model:     "claude-sonnet-4-6",
+		MaxTokens: 4096,
+		System:    systemBlocks,
+		Tools:     tools,
+		Stream:    true,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(jsonBody, &raw); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+
+	// Tools should be omitted (empty slice + omitempty).
+	if _, hasTools := raw["tools"]; hasTools {
+		t.Error("did not expect tools field when no tools are provided")
+	}
+
+	// System block should still have cache_control.
+	sysRaw := raw["system"].([]any)
+	sysBlock := sysRaw[0].(map[string]any)
+	cc := sysBlock["cache_control"].(map[string]any)
+	if cc["type"] != "ephemeral" {
+		t.Errorf("expected system cache_control type 'ephemeral', got %v", cc["type"])
+	}
+}
+
+// TestAnthropicMultiSystemBlocksCaching verifies that when multiple system
+// prompt entries are provided (e.g. static base prompt + dynamic date
+// reminder), only the first (static) block gets cache_control and the
+// trailing dynamic blocks do not. This ensures the date — which changes every
+// turn — does not invalidate the prompt cache prefix.
+func TestAnthropicMultiSystemBlocksCaching(t *testing.T) {
+	// Simulate the loop.go pattern: [static system prompt, dynamic date reminder]
+	systemEntries := []string{
+		"You are a coding agent.\n\nWorking directory: /tmp",
+		"<system-reminder>\nCurrent date: Mon Jan 2 15:04:05 MST 2026\n</system-reminder>",
+	}
+
+	// Replicate the Anthropic provider's system-block construction logic.
+	var systemBlocks []anthropicSystemBlock
+	if len(systemEntries) > 1 {
+		systemBlocks = append(systemBlocks, anthropicSystemBlock{
+			Type:         "text",
+			Text:         systemEntries[0],
+			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+		})
+		for _, s := range systemEntries[1:] {
+			systemBlocks = append(systemBlocks, anthropicSystemBlock{
+				Type: "text",
+				Text: s,
+			})
+		}
+	} else {
+		systemBlocks = []anthropicSystemBlock{
+			{Type: "text", Text: strings.Join(systemEntries, "\n\n"), CacheControl: &anthropicCacheControl{Type: "ephemeral"}},
+		}
+	}
+
+	body := anthropicRequest{
+		Model:     "claude-sonnet-4-6",
+		MaxTokens: 4096,
+		System:    systemBlocks,
+		Stream:    true,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(jsonBody, &raw); err != nil {
+		t.Fatalf("unmarshal request: %v", err)
+	}
+
+	sysRaw, ok := raw["system"].([]any)
+	if !ok {
+		t.Fatalf("expected system to be an array, got %T", raw["system"])
+	}
+	if len(sysRaw) != 2 {
+		t.Fatalf("expected 2 system blocks (static + dynamic), got %d", len(sysRaw))
+	}
+
+	// First block (static) must have cache_control.
+	firstBlock := sysRaw[0].(map[string]any)
+	if firstBlock["type"] != "text" {
+		t.Errorf("expected first block type 'text', got %v", firstBlock["type"])
+	}
+	firstCC, ok := firstBlock["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatal("expected cache_control on first (static) system block")
+	}
+	if firstCC["type"] != "ephemeral" {
+		t.Errorf("expected first block cache_control type 'ephemeral', got %v", firstCC["type"])
+	}
+	// First block must contain the static system prompt text.
+	if !strings.Contains(firstBlock["text"].(string), "Working directory") {
+		t.Error("expected first block to contain the static system prompt")
+	}
+
+	// Second block (dynamic date) must NOT have cache_control.
+	secondBlock := sysRaw[1].(map[string]any)
+	if secondBlock["type"] != "text" {
+		t.Errorf("expected second block type 'text', got %v", secondBlock["type"])
+	}
+	if _, hasCC := secondBlock["cache_control"]; hasCC {
+		t.Error("did not expect cache_control on second (dynamic) system block — it would invalidate the cache every turn")
+	}
+	// Second block must contain the date reminder.
+	if !strings.Contains(secondBlock["text"].(string), "Current date") {
+		t.Error("expected second block to contain the dynamic date reminder")
+	}
+}
+
+// TestAnthropicUsageIsTakenVerbatimFromMessageStart pins the exclusivity
+// contract: real Anthropic reports input_tokens EXCLUSIVE of
+// cache_read_input_tokens and cache_creation_input_tokens, so the parser must
+// carry all three through unchanged. Summing them is what callers do to get the
+// true request size; folding the cache fields into input here would
+// double-count every cached step.
+func TestAnthropicUsageIsTakenVerbatimFromMessageStart(t *testing.T) {
+	sse := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":1000,"output_tokens":1,"cache_read_input_tokens":900,"cache_creation_input_tokens":50}}}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","usage":{"output_tokens":42},"delta":{"stop_reason":"end_turn"}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	p := NewAnthropicProvider()
+	ch := make(chan StreamEvent, 8)
+	p.streamEvents(io.NopCloser(strings.NewReader(sse)), ch, func() {})
+
+	var usage *TokenUsage
+	for evt := range ch {
+		if evt.Type == EventUsage {
+			usage = evt.Usage
+		}
+	}
+	if usage == nil {
+		t.Fatal("expected an EventUsage carrying the message_start usage")
+	}
+	if usage.InputTokens != 1000 {
+		t.Errorf("InputTokens = %d, want 1000 (exclusive of cache fields)", usage.InputTokens)
+	}
+	if usage.CacheReadTokens != 900 {
+		t.Errorf("CacheReadTokens = %d, want 900", usage.CacheReadTokens)
+	}
+	if usage.CacheWriteTokens != 50 {
+		t.Errorf("CacheWriteTokens = %d, want 50", usage.CacheWriteTokens)
+	}
+	if usage.OutputTokens != 42 {
+		t.Errorf("OutputTokens = %d, want 42 (superseded by message_delta)", usage.OutputTokens)
+	}
+}
+
+// TestAnthropicNegativeUsageIsClampedToZero guards the one thing a faithful
+// server never sends but a malformed or unknown proxy might: a negative token
+// count, which would subtract from the running total.
+func TestAnthropicNegativeUsageIsClampedToZero(t *testing.T) {
+	sse := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":-5,"output_tokens":-2,"cache_read_input_tokens":-1,"cache_creation_input_tokens":-3}}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	p := NewAnthropicProvider()
+	ch := make(chan StreamEvent, 8)
+	p.streamEvents(io.NopCloser(strings.NewReader(sse)), ch, func() {})
+
+	var usage *TokenUsage
+	for evt := range ch {
+		if evt.Type == EventUsage {
+			usage = evt.Usage
+		}
+	}
+	if usage == nil {
+		t.Fatal("expected an EventUsage")
+	}
+	if usage.InputTokens != 0 || usage.OutputTokens != 0 || usage.CacheReadTokens != 0 || usage.CacheWriteTokens != 0 {
+		t.Errorf("negative usage must clamp to 0, got %+v", usage)
+	}
+}

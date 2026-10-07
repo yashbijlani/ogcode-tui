@@ -1,0 +1,29 @@
+# Build artifacts
+ogcode
+ogcode-test
+*.db
+
+# Web build dependencies
+web/node_modules
+web/.solid
+
+# Git and CI
+.git
+.github
+.gitignore
+.goreleaser.yaml
+
+# Development files
+.vscode
+.idea
+*.md
+.env
+
+# Test files
+*_test.go
+tests/
+coverage/
+
+# OS files
+.DS_Store
+Thumbs.db

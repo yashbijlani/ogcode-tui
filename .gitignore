@@ -1,0 +1,77 @@
+# Binaries
+ogcode
+ogcode-tui
+*.exe
+
+# Data directory
+.ogcode/
+
+# Workspace public folder — served over HTTP at /public for the web UI. Runtime
+# and user artifacts land there; it is never part of the source tree. Anchored
+# to the repo root so source asset folders (blog/public, web/public) stay
+# trackable.
+/public/
+
+# Web build artifacts
+# Dependencies
+node_modules/
+web/dist/
+web/build/
+web/.solid/
+
+# Blog and docs build artifacts — the Pages workflow builds blog/ and
+# docs-site/ into docs/blog and docs/docs before deploying, so the generated
+# sites never live in the repo.
+docs/blog/
+blog/.astro/
+docs/docs/
+docs-site/.astro/
+
+# Release build output (GoReleaser's default work dir — it archives the repo)
+/dist/
+
+# Python bytecode (bench harness)
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# Per-project ogcode config — local connection overrides (API keys, base URLs)
+# that vary per machine. EnsureProjectFile extends an existing .gitignore with
+# this pattern; it is also listed here so this repo never commits its own.
+ogcode.json
+
+# Winget manifests (managed by GoReleaser in winget-pkgs fork)
+manifests/
+
+# OS files
+.DS_Store
+*.swp
+
+# Claude Code CLI
+.claude/
+
+# Demo media — screen recordings and extracted frames kept machine-local;
+# nothing in README/docs references them, so they must never land in the repo.
+ogcode-demo.mp4
+ogcode-live-demo.mov
+ogcode-live-demo.mp4
+demo-recording/
+
+# Local scratch documents — planning notes kept machine-local; untracked now.
+# The planning/research documents live in plans/ (committed); these rules are
+# root-anchored (/), so they match only a vestigial copy re-created at the repo
+# root — never the tracked file under plans/.
+/exponential_equations.tex
+/polynomial_equations.pdf
+/GIT_DIFF_PLAN.md
+/MCP_IMPLEMENTATION_PLAN.md
+/MCP_OAUTH_PLAN.md
+/SKILL_FEATURE_IMPLEMENTATION.md
+
+# Project long-term memory — machine-local working notes, loaded at runtime by
+# LoadMemoryMD from whatever directory ogcode is opened in. Never tracked: it is
+# personal to a checkout, and it is re-sent in full on every model request, so a
+# committed one becomes every contributor's per-turn token cost as well as ours.
+MEMORY.md

@@ -1,0 +1,358 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/prasenjeet-symon/ogcode/internal/agent"
+	"github.com/prasenjeet-symon/ogcode/internal/git"
+	"github.com/prasenjeet-symon/ogcode/internal/search"
+	"github.com/prasenjeet-symon/ogcode/internal/session"
+)
+
+func (s *Server) handlePath(w http.ResponseWriter, r *http.Request) {
+	home, _ := os.UserHomeDir()
+	writeJSON(w, http.StatusOK, map[string]string{
+		"home":      home,
+		"directory": s.dir,
+		"state":     s.dir + "/.ogcode",
+	})
+}
+
+func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, []map[string]string{
+		{"id": "build", "name": "Build", "description": "Full-access coding agent"},
+		{"id": "plan", "name": "Plan", "description": "Planning agent — reads and understands code, plans changes but never writes"},
+	})
+}
+
+func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{
+		"mode": string(s.mode),
+	})
+}
+
+// handleGitSync reports whether the working directory's current branch is in
+// sync with its upstream (best-effort fetch first). Used by plan mode to warn
+// when the active branch is behind the remote before tasks branch from it.
+func (s *Server) handleGitSync(w http.ResponseWriter, r *http.Request) {
+	st, err := git.BranchSyncStatus(r.Context(), s.dir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
+	builtIn := s.registry.ListModels()
+
+	// Model preferences live in the global config DB (shared across projects).
+	// Keyed by (model id, provider id), not the id alone: the same model id can
+	// be served by two providers — glm-5.3-flash exists under both OGX and a
+	// custom OpenAI-compatible endpoint — and a toggle on one must not flip the
+	// other, or a disable somewhere else would darken a plan model the user
+	// never touched.
+	prefs, _ := session.GetModelPreferences(s.globalDB)
+	prefMap := make(map[string]*session.ModelPreference)
+	for _, p := range prefs {
+		prefMap[p.ID+"\x00"+p.ProviderID] = p
+	}
+
+	availableProviders := make(map[string]bool)
+	for _, id := range s.registry.List() {
+		availableProviders[id] = true
+	}
+
+	type ModelEntry struct {
+		ID              string  `json:"id"`
+		Name            string  `json:"name"`
+		ProviderID      string  `json:"providerId"`
+		Default         bool    `json:"default"`
+		Enabled         bool    `json:"enabled"`
+		IsCustom        bool    `json:"isCustom"`
+		Collection      string  `json:"collection"`
+		InputPricePerM  float64 `json:"inputPricePerM"`
+		OutputPricePerM float64 `json:"outputPricePerM"`
+		SupportsImages  bool    `json:"supportsImages"`
+		// ContextWindow is the window the agent loop sizes compaction against
+		// (catalogue, else learned from an overflow; 0 = unknown), and
+		// CompactAtTokens is the request size at which it compacts. The context
+		// meter reads both, so it agrees with what the loop will actually do.
+		ContextWindow   int `json:"contextWindow,omitempty"`
+		CompactAtTokens int `json:"compactAtTokens"`
+	}
+	windowOf := func(modelID string) (int, int) {
+		w, _ := agent.EffectiveContextWindow(s.registry, s.db, modelID)
+		return w, agent.CompactionThreshold(w)
+	}
+
+	var result []ModelEntry
+	for _, m := range builtIn {
+		defaultEnabled := m.ActiveByDefault
+		if pref, ok := prefMap[m.ID+"\x00"+m.ProviderID]; ok {
+			defaultEnabled = pref.Enabled
+		}
+		// Prefer a probed/cached capability; otherwise the built-in catalogue,
+		// then the provider's own (often heuristic) value. Never probes here —
+		// this is a read-only listing.
+		supportsImages := m.SupportsImages
+		if cm, ok := s.registry.CatalogModel(m.ID); ok {
+			supportsImages = cm.SupportsImages
+		}
+		// What the user pays where the model runs: a provider's own listed price,
+		// else the catalogue's; nothing for local and subscription providers.
+		price, _ := s.registry.PriceOn(m.ProviderID, m.ID)
+		if cap, ok, err := session.GetModelCapability(s.db, m.ID); err == nil && ok {
+			supportsImages = cap.SupportsImages
+		}
+		window, compactAt := windowOf(m.ID)
+		entry := ModelEntry{
+			ID:              m.ID,
+			Name:            m.Name,
+			ProviderID:      m.ProviderID,
+			Default:         m.Default,
+			Enabled:         defaultEnabled,
+			IsCustom:        false,
+			Collection:      m.Collection,
+			InputPricePerM:  price.Input,
+			OutputPricePerM: price.Output,
+			SupportsImages:  supportsImages,
+			ContextWindow:   window,
+			CompactAtTokens: compactAt,
+		}
+		result = append(result, entry)
+	}
+
+	for _, p := range prefs {
+		if !p.IsCustom {
+			continue
+		}
+		if !availableProviders[p.ProviderID] && !p.Enabled {
+			continue
+		}
+		// A custom model is whatever id the user typed. If the built-in catalogue
+		// knows it under that name, its facts apply; otherwise a probed/cached
+		// result is the only source of truth for image support, and false until
+		// the model has been probed (mirrors the built-in branch above).
+		supportsImages := false
+		if cm, ok := s.registry.CatalogModel(p.ID); ok {
+			supportsImages = cm.SupportsImages
+		}
+		price, _ := s.registry.PriceOn(p.ProviderID, p.ID)
+		if cap, ok, err := session.GetModelCapability(s.db, p.ID); err == nil && ok {
+			supportsImages = cap.SupportsImages
+		}
+		window, compactAt := windowOf(p.ID)
+		result = append(result, ModelEntry{
+			ID:              p.ID,
+			Name:            p.DisplayName,
+			ProviderID:      p.ProviderID,
+			Default:         false,
+			Enabled:         p.Enabled,
+			IsCustom:        true,
+			Collection:      p.Collection,
+			InputPricePerM:  price.Input,
+			OutputPricePerM: price.Output,
+			SupportsImages:  supportsImages,
+			ContextWindow:   window,
+			CompactAtTokens: compactAt,
+		})
+	}
+
+	// Enforce a single global default so a new user's model selection is
+	// deterministic. Every provider's Models() flags its own default model, which
+	// would otherwise surface several "default" models and a nondeterministic
+	// pick in the UI. Keep the flag only on the highest-priority registered
+	// provider's default (see provider.ProviderPriority / Registry.DefaultUsable).
+	defaultProviderID := ""
+	if d := s.registry.DefaultUsable(); d != nil {
+		defaultProviderID = d.ID()
+	}
+	for i := range result {
+		if result[i].Default && result[i].ProviderID != defaultProviderID {
+			result[i].Default = false
+		}
+	}
+
+	if result == nil {
+		result = []ModelEntry{}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) configPayload() map[string]any {
+	return map[string]any{
+		"directory":     s.dir,
+		"port":          s.port.Load(),
+		"searchEnabled": s.searchBackend != nil,
+		"searchRunning": s.searchBackend != nil,
+		// installId is the machine's PostHog distinct id — the website's when the
+		// install script recorded one, otherwise a locally minted id — so it is
+		// always set. The web UI adopts it so that download, install and first
+		// session share one person.
+		"installId":          s.installID,
+		"notesEnabled":       s.notesEnabled.Load(),
+		"devicePanelEnabled": s.devicePanelEnabled.Load(),
+	}
+}
+
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.configPayload())
+}
+
+func (s *Server) handleGetSearchConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := session.GetSearchConfig(s.globalDB)
+	if err != nil {
+		http.Error(w, "failed to read search config", http.StatusInternalServerError)
+		return
+	}
+	// Report whether the Tavily key is supplied by the environment so the UI can
+	// show a "configured via TAVILY_API_KEY" state, mirroring the provider keys.
+	resp := struct {
+		*session.SearchConfig
+		TavilyEnvKeySet bool `json:"tavilyEnvKeySet"`
+	}{
+		SearchConfig:    session.MaskedSearchConfig(cfg),
+		TavilyEnvKeySet: os.Getenv("TAVILY_API_KEY") != "",
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleSetSearchConfig(w http.ResponseWriter, r *http.Request) {
+	var incoming session.SearchConfig
+	if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	// The pre-save config: used both to resolve the mask sentinel and to detect
+	// whether the provider/key actually changed (so a slider tweak does not
+	// needlessly rebuild the backend and drop the native engine's caches).
+	existing, err := session.GetSearchConfig(s.globalDB)
+	if err != nil {
+		http.Error(w, "failed to read search config", http.StatusInternalServerError)
+		return
+	}
+	// Preserve the stored key when the client echoes the mask sentinel, so
+	// saving a provider change never wipes a key the UI never saw. Same
+	// convention as handleSetProviderConfig.
+	if incoming.TavilyAPIKey == session.MaskedAPIKey {
+		incoming.TavilyAPIKey = existing.TavilyAPIKey
+	}
+	if err := session.SetSearchConfig(s.globalDB, &incoming); err != nil {
+		http.Error(w, "failed to save search config", http.StatusInternalServerError)
+		return
+	}
+
+	// Apply a provider or key change to the running backend without a restart.
+	// The enable toggle is deliberately not handled here — it changes which tools
+	// are registered, so it still needs a restart; searchSwitch is nil when
+	// search was off at startup, which is exactly that case. SetSearchConfig has
+	// normalised incoming (normaliseProvider), so the comparison uses canonical values.
+	if s.searchSwitch != nil && (incoming.Provider != existing.Provider || incoming.TavilyAPIKey != existing.TavilyAPIKey) {
+		s.searchSwitch.Set(buildSearchBackend(&incoming))
+		logSearchProvider("web search: provider switched live", &incoming)
+	}
+
+	writeJSON(w, http.StatusOK, session.MaskedSearchConfig(&incoming))
+}
+
+// handleValidateSearchKey tests whether a third-party search key works, without
+// persisting anything. The mask sentinel resolves to the stored key so a saved
+// provider can be re-tested without re-entering it. Always responds 200 with
+// {ok, error?} so the UI can render the outcome inline. Provider selection is
+// applied at startup, so this lets the user confirm a key before restarting.
+func (s *Server) handleValidateSearchKey(w http.ResponseWriter, r *http.Request) {
+	var incoming session.SearchConfig
+	if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	apiKey := incoming.TavilyAPIKey
+	if apiKey == session.MaskedAPIKey || apiKey == "" {
+		existing, err := session.GetSearchConfig(s.globalDB)
+		if err != nil {
+			http.Error(w, "failed to read search config", http.StatusInternalServerError)
+			return
+		}
+		apiKey = existing.TavilyAPIKey
+	}
+	if env := os.Getenv("TAVILY_API_KEY"); apiKey == "" && env != "" {
+		apiKey = env
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	if err := search.ValidateTavilyKey(ctx, apiKey); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleModelsRefresh performs an explicit live refresh of every provider's
+// catalogue. It runs the fetch through the same guarded path the background
+// refresh uses, so it can never overlap another refresh — but unlike the
+// background path it returns the refreshed list inline, since the caller asked
+// for it and expects the new models in the response.
+//
+// Models() is a pure read, so the fetch happening here (rather than inside the
+// listing) is what keeps GET /api/models instant. When another refresh already
+// holds the guard, this returns the current list immediately: the in-flight one
+// will publish models.updated when it lands.
+func (s *Server) handleModelsRefresh(w http.ResponseWriter, r *http.Request) {
+	s.refreshModelCatalogsNow(r.Context())
+	s.handleModels(w, r)
+}
+
+func (s *Server) handleVCS(w http.ResponseWriter, r *http.Request) {
+	branch := getCurrentBranch(s.dir)
+	isGitRepo := branch != ""
+	hasRemote := isGitRepo && gitHasRemote(s.dir)
+	ghInstalled := commandExists("gh")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"branch":      branch,
+		"isGitRepo":   isGitRepo,
+		"hasRemote":   hasRemote,
+		"ghInstalled": ghInstalled,
+	})
+}
+
+func getCurrentBranch(dir string) string {
+	out, err := execInDir(dir, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+func gitHasRemote(dir string) bool {
+	out, err := execInDir(dir, "git", "remote")
+	return err == nil && len(strings.TrimSpace(out)) > 0
+}
+
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func execInDir(dir string, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...) //nolint:gosec
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	result := string(out)
+	if len(result) > 0 && result[len(result)-1] == '\n' {
+		result = result[:len(result)-1]
+	}
+	return result, nil
+}

@@ -1,0 +1,310 @@
+package session
+
+import (
+	"encoding/json"
+	"time"
+)
+
+type Session struct {
+	ID                SessionID    `json:"id"`
+	ProjectID         string       `json:"projectId"`
+	Directory         string       `json:"directory"`
+	Title             string       `json:"title"`
+	Model             string       `json:"model,omitempty"`
+	Provider          string       `json:"provider,omitempty"`
+	SessionType       string       `json:"sessionType,omitempty"`
+	Permission        string       `json:"permission,omitempty"`
+	CompactionSummary string       `json:"compactionSummary,omitempty"`
+	UtilityTokens     *TokenCounts `json:"utilityTokens,omitempty"`
+	CreatedAt         int64        `json:"createdAt"`
+	UpdatedAt         int64        `json:"updatedAt"`
+}
+
+type MessageRole string
+
+const (
+	RoleUser      MessageRole = "user"
+	RoleAssistant MessageRole = "assistant"
+)
+
+type MessageInfo struct {
+	ID        MessageID    `json:"id"`
+	SessionID SessionID    `json:"sessionId"`
+	Role      MessageRole  `json:"role"`
+	Agent     string       `json:"agent,omitempty"`
+	ParentID  *MessageID   `json:"parentId,omitempty"`
+	Finish    *string      `json:"finish,omitempty"`
+	Cost      float64      `json:"cost,omitempty"`
+	Tokens    *TokenCounts `json:"tokens,omitempty"`
+	Error     *string      `json:"error,omitempty"`
+	// Interrupted is set when a loop stopped part-way through this turn rather
+	// than because the model finished. It is what a resume decides from.
+	Interrupted *Interruption `json:"interrupted,omitempty"`
+	// Delivery records how far this turn got on its way to the model and how
+	// long the model took to start answering. Set on assistant messages only,
+	// and nil on any written before the field existed.
+	Delivery *Delivery `json:"delivery,omitempty"`
+	// DisplayOnly marks a message that belongs in the transcript but must never
+	// be sent to a model. Mid-loop guidance is the case it exists for: the text
+	// is already folded into the running turn's user message, so persisting it
+	// as an ordinary message would deliver it twice on the next request and
+	// insert a second user row beside one the model is still answering — which
+	// both APIs reject as a break in user/assistant alternation. Recording it
+	// display-only keeps the user's own words in the conversation they typed
+	// them into without changing what any model receives.
+	DisplayOnly bool  `json:"displayOnly,omitempty"`
+	CreatedAt   int64 `json:"createdAt"`
+	// Model and Provider are the endpoint that produced an assistant message,
+	// stamped when its step starts. A session can switch models between turns,
+	// so the session's own Model says only what it runs on now; pricing a turn
+	// needs the one that answered it. Empty on messages written before the
+	// fields existed, which are priced at the session's model instead.
+	Model    string `json:"model,omitempty"`
+	Provider string `json:"provider,omitempty"`
+}
+
+// InterruptReason classifies why a turn stopped short.
+type InterruptReason string
+
+const (
+	// InterruptRateLimit is a 429 or a provider quota, the case where waiting
+	// is the whole fix. RetryAfter carries when waiting is over, where the
+	// provider said.
+	InterruptRateLimit InterruptReason = "rate_limit"
+	// InterruptServerError is a 5xx or an overloaded provider.
+	InterruptServerError InterruptReason = "server_error"
+	// InterruptNetwork is a connection that dropped, timed out or was refused.
+	InterruptNetwork InterruptReason = "network"
+	// InterruptAuth is a rejected key, an expired token, an exhausted balance —
+	// resumable, but only once a human has fixed the account behind it.
+	InterruptAuth InterruptReason = "auth"
+	// InterruptContext is a request too large for the model's window that
+	// compaction could not bring back under it.
+	InterruptContext InterruptReason = "context"
+	// InterruptModelCapability is a 400 because the model lacks a capability the
+	// request used (e.g. image input). Resumable: resume strips the offending
+	// content and retries, or the user switches to a model that has the capability.
+	InterruptModelCapability InterruptReason = "model_capability"
+	// InterruptCrashed marks a turn found unfinished at startup: the process
+	// died mid-stream and never got to record anything about why.
+	InterruptCrashed InterruptReason = "crashed"
+	// InterruptStalled marks a turn that recorded a finish reason but not one
+	// the model chose — it asked for a tool and nothing ran it, or it hit the
+	// output cap mid-answer. The loop that would have carried on is gone.
+	InterruptStalled InterruptReason = "stalled"
+	// InterruptFatal is everything a retry cannot help — a malformed request, a
+	// model that does not exist, a provider rejecting the tool schema.
+	InterruptFatal InterruptReason = "fatal"
+)
+
+// Interruption records why a turn stopped short of finishing and whether
+// picking it up again is worth trying.
+//
+// It sits beside Error rather than replacing it. Error is the provider's own
+// words, which a user needs to read; this is the classification the resume path
+// acts on, and the two answer different questions.
+type Interruption struct {
+	Reason    InterruptReason `json:"reason"`
+	Resumable bool            `json:"resumable"`
+	// Detail is a short human-facing sentence naming what to do about it. The
+	// raw provider error stays in Error.
+	Detail string `json:"detail,omitempty"`
+	// RetryAfter is the unix second the provider said to come back at, or 0
+	// where it said nothing. Only a rate limit tends to carry one.
+	RetryAfter int64 `json:"retryAfter,omitempty"`
+	// Step is the loop step the turn died on, for the UI to say how far it got.
+	Step int `json:"step,omitempty"`
+}
+
+// Delivery records how far a turn got on its way to the model, and how long the
+// model took to say its first word.
+//
+// It hangs off the assistant message rather than the prompt that caused it: the
+// loop owns that record from the moment it creates it, and ParentID already
+// points back at the prompt, so the pairing costs nothing. Only the first step
+// of a turn can point at a human prompt — from step 2 on, the preceding user
+// message is the tool-result message the loop wrote itself — so a client
+// reading Delivery through ParentID never has to reason about steps.
+type Delivery struct {
+	// DispatchedAt is when the StreamChat attempt that succeeded left for the
+	// provider. Re-stamped on every attempt so that retry backoff, which can run
+	// to seconds, never lands inside TTFTMs.
+	DispatchedAt int64 `json:"dispatchedAt,omitempty"`
+	// ConnectedAt is when the provider answered 200 and the stream opened. This
+	// is the moment the request is known to have reached the model.
+	ConnectedAt int64 `json:"connectedAt,omitempty"`
+	// FirstTokenAt is when the first content event of any kind arrived — text,
+	// reasoning or a tool call. Reasoning counts: on a thinking model it is what
+	// arrives first, and waiting for text instead would report the whole
+	// thinking phase as latency.
+	FirstTokenAt int64 `json:"firstTokenAt,omitempty"`
+	// TTFTMs is FirstTokenAt − DispatchedAt: time to first token, the model's
+	// own queue and prefill, free of ogcode's prompt building and of backoff.
+	TTFTMs int64 `json:"ttftMs,omitempty"`
+	// QueuedMs is DispatchedAt − the prompt's CreatedAt: everything ogcode did
+	// before the request left, which is prompt building, memory retrieval and
+	// compaction. Kept apart from TTFTMs so a slow turn can be attributed.
+	QueuedMs int64 `json:"queuedMs,omitempty"`
+	// Attempts is how many StreamChat tries the connection took. Above 1 means
+	// the stream was opened more than once before it held.
+	Attempts int `json:"attempts,omitempty"`
+	// FirstTokenKind is what opened the response: "text", "reasoning" or "tool".
+	FirstTokenKind string `json:"firstTokenKind,omitempty"`
+}
+
+// FinishedNaturally reports whether a finish reason means the model was done.
+//
+// Only three are: the model saying it finished, and the user saying stop. Every
+// other reason — none recorded at all, a request for tools that nothing ran, an
+// error, the output cap — describes a turn that stopped without reaching an
+// end, which is what makes it something to pick back up.
+//
+// The default is deliberately "not finished". A finish reason this code has
+// never seen is far more likely to be a provider spelling one of the failures
+// its own way than a fourth kind of success, and the cost of the two mistakes
+// is not symmetric: offering a resume that turns out to be unnecessary wastes a
+// click, while withholding one strands the conversation.
+func FinishedNaturally(finish *string) bool {
+	if finish == nil {
+		return false
+	}
+	switch *finish {
+	case "stop", "end_turn", "aborted":
+		return true
+	}
+	return false
+}
+
+// CanResume reports whether a message is one a resume should act on.
+func (m *MessageInfo) CanResume() bool {
+	return m != nil && m.Role == RoleAssistant && m.Interrupted != nil && m.Interrupted.Resumable
+}
+
+type TokenCounts struct {
+	Total      int `json:"total,omitempty"`
+	Input      int `json:"input,omitempty"`
+	Output     int `json:"output,omitempty"`
+	Reasoning  int `json:"reasoning,omitempty"`
+	CacheRead  int `json:"cacheRead,omitempty"`
+	CacheWrite int `json:"cacheWrite,omitempty"`
+}
+
+// Consumed is the one definition of a total: every token the call(s) took in or
+// produced — uncached input, both cache variants and output. It is what the
+// providers themselves report as total_tokens, so a session's figure can be
+// checked against their dashboards. Cache reads are included: they are
+// processed and billed (at a discount) on every step that sends them. Reasoning
+// is not added — it is billed inside output, and adding it would count it twice.
+// Every surface that shows a total (per step, per session, utility, `ogcode run`,
+// the web token pill's breakdown) must use this so they agree.
+func (t TokenCounts) Consumed() int {
+	return t.Input + t.CacheRead + t.CacheWrite + t.Output
+}
+
+// Effective is Consumed without cache reads: the tokens spent fresh — uncached
+// input, cache writes and output. Cache reads are the cheapest tokens, and on a
+// long session they are most of Consumed, so a headline built on it mostly
+// counts how often the history was re-sent. Cache writes stay in: they are new
+// input, billed at or above the full input price. Reasoning is inside output,
+// as in Consumed. The web token pill leads with this figure and `ogcode run`
+// reports it beside Total; both must use this so they agree.
+func (t TokenCounts) Effective() int {
+	return t.Input + t.CacheWrite + t.Output
+}
+
+type MessageWithParts struct {
+	Info  MessageInfo `json:"info"`
+	Parts []Part      `json:"parts"`
+}
+
+type PartType string
+
+const (
+	PartText      PartType = "text"
+	PartTool      PartType = "tool"
+	PartReasoning PartType = "reasoning"
+	PartFile      PartType = "file"
+	PartImage     PartType = "image"
+)
+
+type Part struct {
+	ID        PartID          `json:"id"`
+	MessageID MessageID       `json:"messageId"`
+	SessionID SessionID       `json:"sessionId"`
+	Type      PartType        `json:"type"`
+	Data      json.RawMessage `json:"data"`
+	CreatedAt int64           `json:"createdAt"`
+	UpdatedAt int64           `json:"updatedAt"`
+}
+
+type TextPartData struct {
+	Text string `json:"text"`
+}
+
+// ImagePartData stores a user-uploaded image attachment. Data is base64-encoded
+// image bytes; MediaType is e.g. "image/jpeg" or "image/png". The Name field
+// carries the original filename (optional, for display only).
+type ImagePartData struct {
+	MediaType string `json:"mediaType"`
+	Data      string `json:"data"`
+	Name      string `json:"name,omitempty"`
+}
+
+type ToolStatus string
+
+const (
+	ToolPending   ToolStatus = "pending"
+	ToolRunning   ToolStatus = "running"
+	ToolCompleted ToolStatus = "completed"
+	ToolError     ToolStatus = "error"
+	ToolDenied    ToolStatus = "denied"
+)
+
+type ToolPartData struct {
+	Tool   string    `json:"tool"`
+	CallID string    `json:"callId"`
+	State  ToolState `json:"state"`
+}
+
+type ToolState struct {
+	Status   ToolStatus      `json:"status"`
+	Input    json.RawMessage `json:"input"`
+	Output   *string         `json:"output,omitempty"`
+	Error    *string         `json:"error,omitempty"`
+	Title    *string         `json:"title,omitempty"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Image    *ToolImage      `json:"image,omitempty"`
+	Time     ToolTime        `json:"time"`
+}
+
+// ToolImage is an image produced by a tool, persisted so the model can be
+// re-sent the image on history replay. Data is base64-encoded image bytes.
+type ToolImage struct {
+	MediaType string `json:"mediaType"`
+	Data      string `json:"data"`
+}
+
+type ToolTime struct {
+	Start int64 `json:"start,omitempty"`
+	End   int64 `json:"end,omitempty"`
+}
+
+type ReasoningPartData struct {
+	Text      string `json:"text"`
+	Signature string `json:"signature,omitempty"`
+	// RedactedData is the opaque payload of an Anthropic redacted_thinking
+	// block. Such a block has no readable text, and dropping it — or replaying
+	// it as an ordinary thinking block — breaks the round-trip the API
+	// requires within a tool-use turn.
+	RedactedData string `json:"redactedData,omitempty"`
+	// Model is the model that produced this block. Thinking blocks are tied to
+	// the model that generated them: replayed to any other model they are
+	// silently ignored but still billed as input, and an unsigned block from an
+	// OpenAI-family model is rejected outright. Recording the origin lets the
+	// conversion drop what the current model cannot use.
+	Model string `json:"model,omitempty"`
+}
+
+func Now() int64 {
+	return time.Now().UnixMilli()
+}

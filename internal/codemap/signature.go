@@ -1,0 +1,182 @@
+package codemap
+
+import (
+	"fmt"
+	"strings"
+	"unicode/utf8"
+
+	ts "github.com/tree-sitter/go-tree-sitter"
+)
+
+// signatureFor renders the display form of a declaration.
+//
+// Signatures are sliced out of the source rather than reconstructed from the
+// tree. Reconstruction means re-implementing each language's declaration syntax
+// and getting it subtly wrong on generics, variadics and multiple returns; the
+// source already says exactly what the declaration is, so the work is choosing
+// where to stop reading.
+func signatureFor(node *ts.Node, src []byte, kind string, names []string, lang *language) string {
+	switch kind {
+	case "import":
+		return "import block"
+
+	case "package":
+		return capSig(collapse(firstLine(sliceOf(node, src, node.EndByte()))))
+
+	case "type", "const", "var":
+		line := collapse(firstLine(sliceOf(node, src, node.EndByte())))
+		// A grouped declaration's first line is just `const (`, which tells a
+		// reader nothing. List what it binds instead — a group of one included.
+		if len(names) > 1 || (len(names) == 1 && line == kind+" (") {
+			return fmt.Sprintf("%s ( %s )", kind, joinCapped(names, maxGroupNames))
+		}
+		sig := trimOpenBrace(line)
+		// A C typedef states its name last, after the body — `typedef struct {`
+		// on the first line and `} pair_t;` at the end — so the first line
+		// alone never says what the type is called.
+		if node.Kind() == "type_definition" && len(names) == 1 && !strings.Contains(sig, names[0]) {
+			sig += " … " + names[0]
+		}
+		return capSig(sig)
+
+	case "macro":
+		// A C macro that runs over several lines ends its first with the
+		// continuation backslash, which is punctuation, not signature. Rust's
+		// macro_rules! opens its body on the first line, as a function does.
+		return capSig(trimOpenBrace(strings.TrimSuffix(collapse(firstLine(sliceOf(node, src, node.EndByte()))), "\\")))
+
+	case "rule":
+		// The selectors are the rule's signature — its name is already those
+		// selectors, and repeating them adds nothing.
+		if len(names) > 0 {
+			return names[0]
+		}
+		return capSig(trimOpenBrace(collapse(firstLine(sliceOf(node, src, node.EndByte())))))
+
+	case "element", "script", "style":
+		// The opening tag is the signature: it is what the element is, and it
+		// already carries the id and class the name came from. Slicing the
+		// start_tag node itself is what bounds the signature — the element's
+		// own text would run to the closing tag.
+		if tag := firstChildOfKind(node, []string{"start_tag", "self_closing_tag"}); tag != nil {
+			return capSig(collapse(tag.Utf8Text(src)))
+		}
+		return capSig(trimOpenBrace(collapse(firstLine(sliceOf(node, src, node.EndByte())))))
+
+	default:
+		if end, ok := bodyStart(node, lang); ok {
+			// The body is where the slice stops, so the whole signature is safe
+			// to collapse — that keeps a parameter list broken across lines
+			// readable instead of cutting it at the first line break.
+			return capSig(trimOpenBrace(collapse(sliceOf(node, src, end))))
+		}
+		// No body to stop at, so the slice runs to the end of the declaration.
+		// Take one line before collapsing, or the whole construct would fold
+		// into the signature.
+		return capSig(trimOpenBrace(collapse(firstLine(sliceOf(node, src, node.EndByte())))))
+	}
+}
+
+// bodyStart locates where a declaration's body begins, so the signature can
+// stop there.
+//
+// Most declarations carry the body on a `body` field. Function-valued bindings
+// do not: in `const F = () => {...}` the body belongs to the arrow function
+// nested inside the declarator, and without this second lookup the signature
+// would swallow the entire function.
+//
+// A comment can sit between the two. Python puts `def f():  # note` on one line
+// with the block starting on the next, and parses the comment as a child of the
+// definition rather than of the block — so stopping at the body would pull the
+// note into the signature and spend the length cap on it. Braced languages keep
+// such a comment inside the body, where this never fires.
+func bodyStart(n *ts.Node, lang *language) (uint, bool) {
+	// An object-literal property and an anonymous default export hold their
+	// function as a value, and the body is that function's.
+	if k := n.Kind(); k == "pair" || k == "export_statement" {
+		if value := n.ChildByFieldName("value"); value != nil {
+			if body := value.ChildByFieldName("body"); body != nil {
+				return body.StartByte(), true
+			}
+		}
+	}
+	if body := n.ChildByFieldName("body"); body != nil {
+		end := body.StartByte()
+		if len(lang.commentKinds) > 0 {
+			for i := uint(0); i < n.NamedChildCount(); i++ {
+				c := n.NamedChild(i)
+				if c != nil && lang.isComment(c.Kind()) && c.StartByte() < end {
+					end = c.StartByte()
+				}
+			}
+		}
+		return end, true
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		declarator := n.NamedChild(i)
+		if declarator == nil {
+			continue
+		}
+		value := declarator.ChildByFieldName("value")
+		if value == nil {
+			continue
+		}
+		if body := value.ChildByFieldName("body"); body != nil {
+			return body.StartByte(), true
+		}
+	}
+	return 0, false
+}
+
+// sliceOf returns src between node's start and end, guarding the bounds — a
+// malformed parse can hand back ranges that do not line up with the buffer.
+func sliceOf(node *ts.Node, src []byte, end uint) string {
+	start := node.StartByte()
+	if start > uint(len(src)) {
+		return ""
+	}
+	if end > uint(len(src)) || end < start {
+		end = uint(len(src))
+	}
+	return string(src[start:end])
+}
+
+// trimOpenBrace drops the brace that opens a body or a composite literal. It
+// carries no information once the range on the same row already says how far
+// the declaration runs.
+func trimOpenBrace(s string) string {
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "{"))
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// collapse folds runs of whitespace into single spaces so a signature broken
+// across lines in the source still renders as one readable line.
+func collapse(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// capSig truncates on a rune boundary — signatures carry non-ASCII in string
+// literals and identifiers, and slicing mid-rune would emit replacement chars.
+func capSig(s string) string {
+	if len(s) <= maxSigLen {
+		return s
+	}
+	cut := maxSigLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut]) + "…"
+}
+
+func joinCapped(names []string, limit int) string {
+	if len(names) <= limit {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s, … +%d more", strings.Join(names[:limit], ", "), len(names)-limit)
+}
