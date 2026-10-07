@@ -1,6 +1,7 @@
-# Binaries
-ogcode
-ogcode-tui
+# Binaries — anchored to the repo root so the names match only the built
+# executables at the top level, never a source directory (e.g. cmd/ogcode-tui).
+/ogcode
+/ogcode-tui
 *.exe
 
 # Data directory
